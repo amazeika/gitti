@@ -2,7 +2,7 @@
 status: in-progress
 issue: 1
 pr: null
-completed: [1, 2, 3, 4, 5]
+completed: [1, 2, 3, 4, 5, 6]
 ---
 
 # Commit Log Ref Decorations and Optional All-Branches History — Design Document
@@ -773,4 +773,43 @@ tags and remote refs must agree.
 
 ## Outcome
 
-<!-- Build fills this after implementation, including the full-sweep result. Keep it brief. -->
+Commit Log rows now carry the refs pointing at each commit, and the panel filter matches
+them, so typing a branch name isolates that branch's commits. `commit_log_show_refs`
+turns the whole thing off. `commit_log_show_all_branches` widens the walk to every local
+branch, remote-tracking branch and tag; it is off by default and takes effect on restart.
+The reset, revert and create-tag popups name the commit they act on with its refs, and the
+cherry-pick picker stops asserting a branch a commit is not on. Phase 1 shipped the
+boolean-settings repair the rest depended on.
+
+**Deviations.** Phase 3 grew a change the spec did not ask for: the config file is now
+replaced by a rename rather than truncated in place, symlinks are resolved a hop at a time,
+and a session that could not read or locate its config refuses to write one. Review found
+that adding a settings key forces a rewrite of every existing user's config on their first
+launch after upgrading, and that an interrupted rewrite left JSON the next launch discarded
+for the defaults. The repair was justified, but hardening a config writer is not what a
+commit-log feature is for, and it cost most of that phase's eleven review rounds. The
+reset-latest gate moved from a panel row count to `rev-parse --verify --quiet HEAD~1`, which
+the spec assigned to Phase 4 and two review lanes independently predicted from Phase 3.
+
+**Decisions.** The panel filter matches refs whenever the setting is on, independent of the
+row width. A row too narrow to draw refs still matches them: gating the filter on width
+instead would silently return nothing at the panel sizes where refs cannot be drawn at all,
+which is most of them below a wide terminal. The commit-log ref block is dropped below
+thirty free columns so the subject keeps at least fifteen, which means refs appear only on
+a left panel of roughly fifty columns or more.
+
+**Deferred.** Every `Update*` setter except the two this work added still reports success
+when a write is refused, because `saveConfig` discards the error; closing that means nine
+setters, their CLI callers and four locale files. A failure to locate the config is not
+distinguished from a failure to create its directory. A failure to resolve a link's own
+directory falls back to a lexical join. The unreadable-config path returns silently, with no
+logger available at that point in startup. The cherry-pick row labels the commit's raw
+decorations "from branch", so a tag reads as a branch. The ref block truncates at a column
+rather than a ref boundary.
+
+**Full sweep.** 91 tests across six packages, green with `-count=1` so the run is real
+rather than replayed, and the build green alongside it.
+
+**Coverage.** One Phase 4 round ran with two of three review lanes: the Grok bridge was
+cancelled without output on all three permitted attempts against that delta, and the gap was
+accepted rather than left silent. It completed normally on the next, smaller delta.
