@@ -554,6 +554,9 @@ them, and a user who prefers today's denser rows can turn the whole thing off
 - [ ] The ref block is omitted when fewer than 30 columns remain after the hash,
       monogram and lane, and is otherwise truncated to at most half of that remaining
       width, so the subject retains at least 15 columns on any row showing refs.
+      **Superseded** by [`_draft-compact-commit-log-refs.md`](_draft-compact-commit-log-refs.md):
+      the 30-column floor made refs invisible below roughly a 160-column terminal at the
+      default panel ratio. The floor is now 18 and the subject guarantee is half the row.
 - [ ] A detached `HEAD` renders its `HEAD` decoration without assuming a branch name.
 - [ ] `CommitLogShowRefs` exists as `commit_log_show_refs`, defaults to `true`, and
       survives a restart when set to `false` (depends on Phase 1).
@@ -847,8 +850,9 @@ setters, their CLI callers and four locale files. A failure to locate the config
 distinguished from a failure to create its directory. A failure to resolve a link's own
 directory falls back to a lexical join. The unreadable-config path returns silently, with no
 logger available at that point in startup. The cherry-pick row labels the commit's raw
-decorations "from branch", so a tag reads as a branch. The ref block truncates at a column
-rather than a ref boundary.
+decorations "from branch", so a tag reads as a branch — closed by
+[`_draft-compact-commit-log-refs.md`](_draft-compact-commit-log-refs.md). The ref block
+truncates at a column rather than a ref boundary.
 
 **Full sweep.** 91 tests across six packages, green with `-count=1` so the run is real
 rather than replayed, and the build green alongside it.

@@ -80,7 +80,7 @@ func InitGitCherryPickPopUpModel(m *types.GittiModel, branchName string) {
 				Hash:       commitItem.Hash,
 				Message:    commitItem.Message,
 				Author:     commitItem.Author,
-				FromBranch: cherryPickSourceLabel(commitItem.Refs, branchName),
+				FromBranch: cherryPickSourceLabel(commitItem.BranchLabel, branchName),
 			})
 		}
 	}
@@ -236,10 +236,15 @@ func InitGitRevertConfirmationPopUpModel(m *types.GittiModel, commitHash string,
 //	carrying none says nothing, rather than naming a branch it is not on
 //
 // ------------------------------------
-func cherryPickSourceLabel(refs string, checkedOutBranch string) string {
+func cherryPickSourceLabel(branchLabel string, checkedOutBranch string) string {
 	if !settings.GITTICONFIGSETTINGS.CommitLogShowAllBranches {
 		return checkedOutBranch
 	}
 
-	return refs
+	// In all-branches mode a commit need not belong to the checked-out branch, so
+	// the label has to come from the commit's own decorations. Only a branch can
+	// answer "from branch": printing the raw decoration list here labelled tags
+	// and remote duplicates as branches, and a commit reachable from no branch tip
+	// yields nothing rather than a wrong name.
+	return branchLabel
 }

@@ -231,10 +231,28 @@ gitti --commit-log-show-refs false
 gitti --commit-log-show-all-branches true
 ```
 
-Ref decorations appear beside the commit subject and join the panel filter, so pressing
-`F` and typing a branch name isolates that branch's commits. They need room: on a narrow
-left panel the subject keeps priority and the refs are dropped, so widen the panel with
-`+` or use a wider terminal to see them.
+Ref decorations appear beside the commit subject in a compact form:
+
+| Shown | Meaning |
+| --- | --- |
+| `*main` | `main` is the branch you have checked out |
+| `main^` | a remote has this commit too, so the branch is pushed |
+| `*main^` | both of the above |
+| `origin/release` | exists only on the remote; there is no local branch of that name |
+| `v0.9.0` | a tag |
+| `*HEAD` | detached `HEAD`; the commit hash is in the row's first column |
+
+`*` appears at most once in the whole log, which is most useful in all-branches mode where
+many branch tips are on screen at once. A branch that lives on several remotes still shows
+a single `^`.
+
+Filtering is not narrowed by what a row draws: a pushed branch renders as `main^`, but
+pressing `F` and typing either `main` or `origin/main` isolates its commits.
+
+Refs need room. On a narrow left panel the subject keeps priority and the block is dropped,
+so widen the panel with `+` or use a wider terminal. At the default panel ratio refs appear
+from about a 120-column terminal; on an 80-column terminal press `+` until the panel is
+about half the width.
 
 The commit limit (`--max-commit-log-count`) applies across the union in all-branches mode,
 not per branch, so a repository with many branches shows fewer commits from each.

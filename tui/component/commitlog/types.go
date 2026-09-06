@@ -17,8 +17,12 @@ import (
 
 const (
 	// Below this much room after the hash, monogram and lane, a ref block would
-	// leave the subject unreadable, so the row drops the refs instead.
-	commitLogRefsMinAvailableWidth = 30
+	// leave the subject unreadable, so the row drops the refs instead. Set so that
+	// the half-width budget below still clears the shortest useful block: 18/2
+	// less the overhead leaves 6 columns, which holds a short branch name and its
+	// markers. Compacted refs need a few columns where git's raw list needed
+	// tens, so the floor that list required would now hide refs on ample rows.
+	commitLogRefsMinAvailableWidth = 18
 	// Width taken by the block's own brackets and the space separating it from
 	// the subject.
 	commitLogRefsBlockOverhead = 3
@@ -42,9 +46,16 @@ type Cell struct {
 type (
 	GitCommitLogItemDelegate struct{}
 	GitCommitLogItem         struct {
-		Hash         string
-		Parents      []string
-		Refs         string
+		Hash    string
+		Parents []string
+		// Refs is already compacted for display. RefsFilter carries every name in
+		// the form git would have printed, including the remote duplicates the
+		// compaction drops, so filtering is not narrowed by how a row is drawn.
+		Refs       string
+		RefsFilter string
+		// BranchLabel names the one branch a commit sits on, for callers that need
+		// a single branch rather than the whole list.
+		BranchLabel  string
 		Message      string
 		Author       string
 		LaneCharList []Cell
@@ -58,8 +69,8 @@ func (i GitCommitLogItem) FilterValue() string {
 	// to draw refs, but someone filtering by a branch name still wants that
 	// branch's commits. Gating on width instead would return nothing at all on
 	// the panel sizes where no row can draw refs.
-	if settings.GITTICONFIGSETTINGS.CommitLogShowRefs && i.Refs != "" {
-		filterValue += " " + i.Refs
+	if settings.GITTICONFIGSETTINGS.CommitLogShowRefs && i.RefsFilter != "" {
+		filterValue += " " + i.RefsFilter
 	}
 	return filterValue
 }
@@ -67,9 +78,9 @@ func (i GitCommitLogItem) FilterValue() string {
 // ------------------------------------
 //
 //	Build the bracketed ref decoration drawn between the commit lane and the
-//	subject, given the width left on the row for both. The block takes at most
-//	half of that width so the subject keeps the rest, and is dropped entirely on
-//	a row too narrow to carry both
+//	subject, given the width left on the row for both. The refs arrive already
+//	compacted. The block takes at most half of that width so the subject keeps the
+//	rest, and is dropped entirely on a row too narrow to carry both
 //
 // ------------------------------------
 func refBlockText(refs string, availableWidth int) string {

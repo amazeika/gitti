@@ -3,6 +3,7 @@ package commitlog
 import (
 	"charm.land/bubbles/v2/list"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/gohyuhan/gitti/api/git"
 	"github.com/gohyuhan/gitti/tui/constant"
 	"github.com/gohyuhan/gitti/tui/style"
 	"github.com/gohyuhan/gitti/tui/types"
@@ -40,7 +41,9 @@ func InitGitCommitLogList(m *types.GittiModel) bool {
 		latestGitCommitLogItemArray = append(latestGitCommitLogItemArray, GitCommitLogItem{
 			Hash:         commitLog.Hash,
 			Parents:      commitLog.Parents,
-			Refs:         commitLog.Refs,
+			Refs:         git.CompactDecorations(commitLog.Refs),
+			RefsFilter:   git.DecorationFilterText(commitLog.Refs),
+			BranchLabel:  git.DecorationBranchLabel(commitLog.Refs),
 			Message:      commitLog.Message,
 			Author:       commitLog.Author,
 			LaneCharList: laneCharList,
