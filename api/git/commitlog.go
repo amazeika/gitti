@@ -140,9 +140,11 @@ func buildCommitLogArgs(maxCommitLogCount string, allBranches bool) []string {
 	gitArgs := []string{
 		"log",
 		"--topo-order",
-		// --no-decorate neither suppresses nor enables anything here: a format
-		// containing %D loads decorations regardless of it.
-		"--no-decorate",
+		// --decorate=full makes %D write namespace-qualified refnames. The short
+		// form is ambiguous: "origin/x" could be a remote branch or a local branch
+		// literally named that, and telling them apart is what lets a pushed
+		// branch's duplicate entry be collapsed rather than printed twice.
+		"--decorate=full",
 		"--decorate-refs=HEAD",
 		"--decorate-refs=refs/heads/*",
 		"--decorate-refs=refs/remotes/*",

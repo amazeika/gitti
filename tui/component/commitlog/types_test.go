@@ -7,6 +7,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/gohyuhan/gitti/api/git"
 	"github.com/gohyuhan/gitti/settings"
 	"github.com/gohyuhan/gitti/tui/constant"
 )
@@ -31,17 +32,39 @@ func withShowRefs(t *testing.T, showRefs bool) {
 func TestFilterValueMatchesARef(t *testing.T) {
 	withShowRefs(t, true)
 
-	item := GitCommitLogItem{Hash: "abc1234", Refs: "origin/feature-x", Message: "tidy up", Author: "Ada"}
+	item := GitCommitLogItem{Hash: "abc1234", Refs: "feature-x^", RefsFilter: "feature-x origin/feature-x", Message: "tidy up", Author: "Ada"}
 
 	if !strings.Contains(item.FilterValue(), "origin/feature-x") {
 		t.Errorf("FilterValue = %q, want the branch name so a filter can isolate its commits", item.FilterValue())
 	}
 }
 
+func TestFilterValueMatchesARemoteNameTheRowNoLongerDraws(t *testing.T) {
+	withShowRefs(t, true)
+
+	// The row collapses a pushed branch to "feature-x^", dropping the separate
+	// origin entry. Someone who types the remote form must still find the commit.
+	const decorated = "HEAD -> refs/heads/feature-x, refs/remotes/origin/feature-x"
+	item := GitCommitLogItem{
+		Hash:       "abc1234",
+		Refs:       git.CompactDecorations(decorated),
+		RefsFilter: git.DecorationFilterText(decorated),
+		Message:    "tidy up",
+		Author:     "Ada",
+	}
+
+	if strings.Contains(item.Refs, "origin/") {
+		t.Fatalf("Refs = %q, want the duplicate remote entry collapsed away", item.Refs)
+	}
+	if !strings.Contains(item.FilterValue(), "origin/feature-x") {
+		t.Errorf("FilterValue = %q, want the remote form to still match", item.FilterValue())
+	}
+}
+
 func TestFilterValueIgnoresRefsWhenTheSettingIsOff(t *testing.T) {
 	withShowRefs(t, false)
 
-	item := GitCommitLogItem{Hash: "abc1234", Refs: "origin/feature-x", Message: "tidy up", Author: "Ada"}
+	item := GitCommitLogItem{Hash: "abc1234", Refs: "origin/feature-x", RefsFilter: "origin/feature-x", Message: "tidy up", Author: "Ada"}
 
 	if strings.Contains(item.FilterValue(), "origin/feature-x") {
 		t.Errorf("FilterValue = %q, want no refs: the rows show none, so a filter must not match them", item.FilterValue())
@@ -53,9 +76,9 @@ func TestFilterValueDoesNotDependOnTheRowWidth(t *testing.T) {
 
 	// A panel this narrow draws no ref block at all, but someone filtering by a
 	// branch name still wants that branch's commits.
-	item := GitCommitLogItem{Hash: "abc1234", Refs: "origin/feature-x", Message: "tidy up", Author: "Ada"}
-	if block := refBlockText(item.Refs, 24-constant.ListItemOrTitleWidthPad); block != "" {
-		t.Fatalf("refBlockText = %q, want nothing drawn on a 24-column panel", block)
+	item := GitCommitLogItem{Hash: "abc1234", Refs: "origin/feature-x", RefsFilter: "origin/feature-x", Message: "tidy up", Author: "Ada"}
+	if block := refBlockText(item.Refs, 16-constant.ListItemOrTitleWidthPad); block != "" {
+		t.Fatalf("refBlockText = %q, want nothing drawn on a 16-column panel", block)
 	}
 
 	if !strings.Contains(item.FilterValue(), "origin/feature-x") {
@@ -96,7 +119,7 @@ func TestRefBlockTextIsDroppedOnANarrowRow(t *testing.T) {
 	}
 }
 
-func TestRefBlockTextLeavesTheSubjectHalfTheRow(t *testing.T) {
+func TestRefBlockTextNeverTakesMoreThanHalfTheRow(t *testing.T) {
 	longRefs := "HEAD -> feature/a-very-long-branch-name, origin/feature/a-very-long-branch-name, tag: v1.2.3"
 
 	for available := commitLogRefsMinAvailableWidth; available <= 200; available++ {
@@ -107,8 +130,11 @@ func TestRefBlockTextLeavesTheSubjectHalfTheRow(t *testing.T) {
 		if used > available/2 {
 			t.Fatalf("at %d columns the ref block took %d, more than half the row", available, used)
 		}
-		if available-used < 15 {
-			t.Fatalf("at %d columns the subject was left %d columns, fewer than 15", available, available-used)
+		// Half the row is the whole guarantee now: at the 18-column floor that
+		// leaves the subject 9, and the compacted block is short enough that the
+		// cap rarely binds at all.
+		if available-used < available/2 {
+			t.Fatalf("at %d columns the subject was left %d columns, less than half the row", available, available-used)
 		}
 	}
 }
