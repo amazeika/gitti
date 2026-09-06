@@ -225,10 +225,11 @@ func TestDrainAndWaitReturnsAfterAnOverLongLine(t *testing.T) {
 // ------------------------------------
 //
 //	Create a repository in a temporary directory, point the global executor at it
-//	for the duration of one test, and return a runner for further git commands
+//	for the duration of one test, and return its path with a runner for further
+//	git commands
 //
 // ------------------------------------
-func repositoryUnderTest(t *testing.T) func(gitArgs ...string) {
+func repositoryUnderTest(t *testing.T) (string, func(gitArgs ...string)) {
 	t.Helper()
 
 	root := t.TempDir()
@@ -253,7 +254,7 @@ func repositoryUnderTest(t *testing.T) func(gitArgs ...string) {
 	t.Cleanup(func() { executor.GittiCmdExecutor = original })
 	executor.InitCmdExecutor(root)
 
-	return run
+	return root, run
 }
 
 // ------------------------------------
@@ -262,11 +263,11 @@ func repositoryUnderTest(t *testing.T) func(gitArgs ...string) {
 //	entry never blocks the test
 //
 // ------------------------------------
-func commitLogUnderTest(t *testing.T) (*GitCommitLog, *logging.GittiLogging) {
+func commitLogUnderTest(t *testing.T, allBranches bool) (*GitCommitLog, *logging.GittiLogging) {
 	t.Helper()
 
 	gittiLogging := logging.InitGittiLogging(64, make(chan string, 256), 3)
-	return InitGitCommitLog(make(chan string, 16), nil, 2500, gittiLogging), gittiLogging
+	return InitGitCommitLog(make(chan string, 16), nil, 2500, allBranches, gittiLogging), gittiLogging
 }
 
 // ------------------------------------
@@ -285,12 +286,12 @@ func errorLogs(gittiLogging *logging.GittiLogging) []string {
 }
 
 func TestGetCommitLogsAttachesRefsToEachCommit(t *testing.T) {
-	run := repositoryUnderTest(t)
+	_, run := repositoryUnderTest(t)
 	run("commit", "-q", "--allow-empty", "-m", "first")
 	run("tag", "v0.1.0")
 	run("commit", "-q", "--allow-empty", "-m", "second")
 
-	gitCommitLog, gittiLogging := commitLogUnderTest(t)
+	gitCommitLog, gittiLogging := commitLogUnderTest(t, false)
 	gitCommitLog.GetCommitLogs()
 
 	commits := gitCommitLog.GitCommitLogOutput()
@@ -314,7 +315,7 @@ func TestGetCommitLogsIsQuietOnAnUnbornHead(t *testing.T) {
 	// here would be a permanent error in the log panel.
 	repositoryUnderTest(t)
 
-	gitCommitLog, gittiLogging := commitLogUnderTest(t)
+	gitCommitLog, gittiLogging := commitLogUnderTest(t, false)
 	gitCommitLog.GetCommitLogs()
 
 	if commits := gitCommitLog.GitCommitLogOutput(); len(commits) != 0 {
@@ -326,10 +327,10 @@ func TestGetCommitLogsIsQuietOnAnUnbornHead(t *testing.T) {
 }
 
 func TestGetCommitLogsKeepsTheLastGoodHistoryWhenTheReadFails(t *testing.T) {
-	run := repositoryUnderTest(t)
+	_, run := repositoryUnderTest(t)
 	run("commit", "-q", "--allow-empty", "-m", "first")
 
-	gitCommitLog, gittiLogging := commitLogUnderTest(t)
+	gitCommitLog, gittiLogging := commitLogUnderTest(t, false)
 	gitCommitLog.GetCommitLogs()
 
 	good := gitCommitLog.GitCommitLogOutput()
@@ -354,5 +355,99 @@ func TestGetCommitLogsKeepsTheLastGoodHistoryWhenTheReadFails(t *testing.T) {
 	}
 	if recorded := errorLogs(gittiLogging); len(recorded) != 1 {
 		t.Errorf("recorded %d errors for one failed read, want exactly 1: %v", len(recorded), recorded)
+	}
+}
+
+func TestGetCommitLogsWalksOnlyHeadWhenAllBranchesIsOff(t *testing.T) {
+	_, run := repositoryUnderTest(t)
+	run("commit", "-q", "--allow-empty", "-m", "on master")
+	run("switch", "-q", "-c", "feature")
+	run("commit", "-q", "--allow-empty", "-m", "on feature")
+	run("switch", "-q", "master")
+
+	gitCommitLog, _ := commitLogUnderTest(t, false)
+	gitCommitLog.GetCommitLogs()
+
+	commits := gitCommitLog.GitCommitLogOutput()
+	if len(commits) != 1 {
+		t.Fatalf("read %d commits, want only the checked-out history", len(commits))
+	}
+	if commits[0].Message != "on master" {
+		t.Errorf("read %q, want the commit on the checked-out branch", commits[0].Message)
+	}
+}
+
+func TestGetCommitLogsWalksEveryBranchWhenAllBranchesIsOn(t *testing.T) {
+	_, run := repositoryUnderTest(t)
+	run("commit", "-q", "--allow-empty", "-m", "on master")
+	run("switch", "-q", "-c", "feature")
+	run("commit", "-q", "--allow-empty", "-m", "on feature")
+	run("switch", "-q", "master")
+
+	gitCommitLog, _ := commitLogUnderTest(t, true)
+	gitCommitLog.GetCommitLogs()
+
+	commits := gitCommitLog.GitCommitLogOutput()
+	if len(commits) != 2 {
+		t.Fatalf("read %d commits, want the diverged branch as well", len(commits))
+	}
+	if !strings.Contains(commits[0].Refs, "feature") {
+		t.Errorf("tip Refs = %q, want the other branch labelled", commits[0].Refs)
+	}
+}
+
+func TestGetCommitLogsExcludesStashAndNotesInBothModes(t *testing.T) {
+	for _, allBranches := range []bool{false, true} {
+		root, run := repositoryUnderTest(t)
+		run("commit", "-q", "--allow-empty", "-m", "a commit")
+		run("notes", "add", "-m", "a note", "HEAD")
+		if err := os.WriteFile(filepath.Join(root, "f.txt"), []byte("x"), 0o644); err != nil {
+			t.Fatalf("writing a file to stash: %v", err)
+		}
+		run("add", "f.txt")
+		run("stash", "-q")
+
+		gitCommitLog, _ := commitLogUnderTest(t, allBranches)
+		gitCommitLog.GetCommitLogs()
+
+		for _, commit := range gitCommitLog.GitCommitLogOutput() {
+			if strings.Contains(commit.Message, "WIP on") || strings.Contains(commit.Message, "index on") ||
+				strings.Contains(commit.Message, "Notes added") {
+				t.Errorf("allBranches=%v: %q reached the commit rows", allBranches, commit.Message)
+			}
+		}
+	}
+}
+
+func TestGetCommitLogsWalksTheBranchesOfAnUnbornHead(t *testing.T) {
+	_, run := repositoryUnderTest(t)
+	run("commit", "-q", "--allow-empty", "-m", "on master")
+	run("switch", "-q", "--orphan", "unborn")
+
+	gitCommitLog, gittiLogging := commitLogUnderTest(t, true)
+	gitCommitLog.GetCommitLogs()
+
+	// HEAD points at a branch with no commits, but the other branches are intact
+	// and must still produce rows.
+	commits := gitCommitLog.GitCommitLogOutput()
+	if len(commits) != 1 {
+		t.Fatalf("read %d commits from an unborn HEAD, want the other branch's history", len(commits))
+	}
+	if recorded := errorLogs(gittiLogging); recorded != nil {
+		t.Errorf("an unborn HEAD recorded errors: %v", recorded)
+	}
+}
+
+func TestGetCommitLogsIsQuietOnAnEmptyRepositoryInAllBranchesMode(t *testing.T) {
+	repositoryUnderTest(t)
+
+	gitCommitLog, gittiLogging := commitLogUnderTest(t, true)
+	gitCommitLog.GetCommitLogs()
+
+	if commits := gitCommitLog.GitCommitLogOutput(); len(commits) != 0 {
+		t.Errorf("read %d commits from an empty repository", len(commits))
+	}
+	if recorded := errorLogs(gittiLogging); recorded != nil {
+		t.Errorf("an empty repository recorded errors: %v", recorded)
 	}
 }

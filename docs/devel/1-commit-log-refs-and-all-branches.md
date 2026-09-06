@@ -2,7 +2,7 @@
 status: in-progress
 issue: 1
 pr: null
-completed: [1, 2]
+completed: [1, 2, 3]
 ---
 
 # Commit Log Ref Decorations and Optional All-Branches History — Design Document
@@ -600,7 +600,7 @@ them, and a user who prefers today's denser rows can turn the whole thing off
 **ID:** `3`
 **Goal:** with the setting enabled, the Commit Log shows commits from every local
 branch, remote-tracking branch and tag, each labelled by its refs
-**Tests:** pending
+**Tests:** `api/git/commitlog_test.go`, `settings/settings_test.go`, `i18n/i18n_test.go`
 
 **Acceptance criteria:**
 

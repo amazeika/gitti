@@ -57,6 +57,7 @@ type LanguageMapping struct {
 	FlagOverrideSigningUISuspend string
 	FlagFfMerge                  string
 	FlagCommitLogShowRefs        string
+	FlagCommitLogShowAllBranches string
 	// Run Error
 	FailToGetCWD                string
 	TuiRunFail                  string
@@ -75,32 +76,36 @@ type LanguageMapping struct {
 	EditorSetError    string
 	EditorSetSuccess  string
 	// Gitti terminal text
-	GitNotInstalledError             string
-	GitNotInitPrompt                 string
-	GitInitRefuse                    string
-	GitInitPromptInvalidInput        string
-	GitCertainStateStillInProgress   string
-	MaxCommitLogCountSet             string
-	MaxCommitLogCountSetError        string
-	MaxRefLogCountSet                string
-	MaxRefLogCountSetError           string
-	AllowCommitGraphWriteEnabled     string
-	AllowCommitGraphWriteDisabled    string
-	AllowCommitGraphWriteSetError    string
-	MaxLogCountSet                   string
-	MaxLogCountSetError              string
-	ShowXLogSet                      string
-	ShowXLogSetError                 string
-	OverrideSigningUISuspendEnabled  string
-	OverrideSigningUISuspendDisabled string
-	OverrideSigningUISuspendSetError string
-	FfMergeEnabled                   string
-	FfMergeDisabled                  string
-	FfMergeSetError                  string
-	CommitLogShowRefsEnabled         string
-	CommitLogShowRefsDisabled        string
-	CommitLogShowRefsSetError        string
-	CommitLogShowRefsSaveError       string
+	GitNotInstalledError              string
+	GitNotInitPrompt                  string
+	GitInitRefuse                     string
+	GitInitPromptInvalidInput         string
+	GitCertainStateStillInProgress    string
+	MaxCommitLogCountSet              string
+	MaxCommitLogCountSetError         string
+	MaxRefLogCountSet                 string
+	MaxRefLogCountSetError            string
+	AllowCommitGraphWriteEnabled      string
+	AllowCommitGraphWriteDisabled     string
+	AllowCommitGraphWriteSetError     string
+	MaxLogCountSet                    string
+	MaxLogCountSetError               string
+	ShowXLogSet                       string
+	ShowXLogSetError                  string
+	OverrideSigningUISuspendEnabled   string
+	OverrideSigningUISuspendDisabled  string
+	OverrideSigningUISuspendSetError  string
+	FfMergeEnabled                    string
+	FfMergeDisabled                   string
+	FfMergeSetError                   string
+	CommitLogShowRefsEnabled          string
+	CommitLogShowRefsDisabled         string
+	CommitLogShowRefsSetError         string
+	CommitLogShowRefsSaveError        string
+	CommitLogShowAllBranchesEnabled   string
+	CommitLogShowAllBranchesDisabled  string
+	CommitLogShowAllBranchesSetError  string
+	CommitLogShowAllBranchesSaveError string
 	// Gitti UI text
 	Branches                    string
 	ModifiedFiles               string
