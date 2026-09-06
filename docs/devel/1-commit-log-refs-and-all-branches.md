@@ -2,7 +2,7 @@
 status: in-progress
 issue: 1
 pr: null
-completed: [1]
+completed: [1, 2]
 ---
 
 # Commit Log Ref Decorations and Optional All-Branches History — Design Document
@@ -526,7 +526,7 @@ both answers, so the question cannot arise.
 **ID:** `2`
 **Goal:** every commit row displays the refs pointing at it, the panel filter matches
 them, and a user who prefers today's denser rows can turn the whole thing off
-**Tests:** pending
+**Tests:** `api/git/commitlog_test.go`, `tui/component/commitlog/types_test.go`, `tui/component/commitlog/init_test.go`, `i18n/i18n_test.go`, `settings/settings_test.go`
 
 **Acceptance criteria:**
 

@@ -267,3 +267,36 @@ func ChooseAndSetEditor() {
 	fmt.Printf(i18n.LANGUAGEMAPPING.EditorSetSuccess, choice)
 	os.Exit(0)
 }
+
+// ------------------------------------
+//
+//	Set whether the commit log shows ref decorations and persist to config
+//
+// ------------------------------------
+func SetCommitLogShowRefs(showRefs string) {
+	var enabled bool
+	switch strings.ToLower(showRefs) {
+	case "true":
+		enabled = true
+	case "false":
+		enabled = false
+	default:
+		lipgloss.Println(i18n.LANGUAGEMAPPING.CommitLogShowRefsSetError)
+		os.Exit(1)
+	}
+
+	// Confirm the setting only once it is on disk. Reporting success for a write
+	// that failed sends the user away believing a setting they will lose on the
+	// next launch.
+	if err := settings.UpdateCommitLogShowRefs(enabled); err != nil {
+		lipgloss.Println(fmt.Sprintf(i18n.LANGUAGEMAPPING.CommitLogShowRefsSaveError, err.Error()))
+		os.Exit(1)
+	}
+
+	if enabled {
+		lipgloss.Println(i18n.LANGUAGEMAPPING.CommitLogShowRefsEnabled)
+	} else {
+		lipgloss.Println(i18n.LANGUAGEMAPPING.CommitLogShowRefsDisabled)
+	}
+	os.Exit(0)
+}

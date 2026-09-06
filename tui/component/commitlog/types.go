@@ -8,18 +8,30 @@ import (
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
+	"github.com/gohyuhan/gitti/settings"
 	"github.com/gohyuhan/gitti/tui/constant"
 	"github.com/gohyuhan/gitti/tui/style"
+)
+
+const (
+	// Below this much room after the hash, monogram and lane, a ref block would
+	// leave the subject unreadable, so the row drops the refs instead.
+	commitLogRefsMinAvailableWidth = 30
+	// Width taken by the block's own brackets and the space separating it from
+	// the subject.
+	commitLogRefsBlockOverhead = 3
 )
 
 // ------------------------------------
 //
 //	Cell holds a single commit-graph character and its associated color ID for
-//	lane rendering. GitCommitLogItem holds the hash, parents, message, author,
-//	graph lane data, and color ID for one commit entry. GitCommitLogItemDelegate
-//	renders each row as a 7-char yellow hash, author monogram, colored graph lane,
-//	and truncated commit message.
+//	lane rendering. GitCommitLogItem holds the hash, parents, refs, message,
+//	author, graph lane data, and color ID for one commit entry.
+//	GitCommitLogItemDelegate renders each row as a 7-char yellow hash, author
+//	monogram, colored graph lane, the commit's ref decorations, and truncated
+//	commit message.
 //
 // ------------------------------------
 type Cell struct {
@@ -32,6 +44,7 @@ type (
 	GitCommitLogItem         struct {
 		Hash         string
 		Parents      []string
+		Refs         string
 		Message      string
 		Author       string
 		LaneCharList []Cell
@@ -40,7 +53,32 @@ type (
 )
 
 func (i GitCommitLogItem) FilterValue() string {
-	return i.Hash + " " + i.Message + " " + i.Author
+	filterValue := i.Hash + " " + i.Message + " " + i.Author
+	// The setting alone decides this, not the row width. A narrow row has no room
+	// to draw refs, but someone filtering by a branch name still wants that
+	// branch's commits. Gating on width instead would return nothing at all on
+	// the panel sizes where no row can draw refs.
+	if settings.GITTICONFIGSETTINGS.CommitLogShowRefs && i.Refs != "" {
+		filterValue += " " + i.Refs
+	}
+	return filterValue
+}
+
+// ------------------------------------
+//
+//	Build the bracketed ref decoration drawn between the commit lane and the
+//	subject, given the width left on the row for both. The block takes at most
+//	half of that width so the subject keeps the rest, and is dropped entirely on
+//	a row too narrow to carry both
+//
+// ------------------------------------
+func refBlockText(refs string, availableWidth int) string {
+	if refs == "" || availableWidth < commitLogRefsMinAvailableWidth {
+		return ""
+	}
+
+	budget := availableWidth/2 - commitLogRefsBlockOverhead
+	return "[" + ansi.Truncate(refs, budget, "...") + "]"
 }
 
 func (d GitCommitLogItemDelegate) Height() int                             { return 1 }
@@ -73,6 +111,8 @@ func (d GitCommitLogItemDelegate) Render(w io.Writer, m list.Model, index int, l
 		)
 	}
 
+	componentWidth := m.Width() - constant.ListItemOrTitleWidthPad
+
 	var lineBuilder strings.Builder
 	lineBuilder.WriteString(style.NewStyle.Foreground(style.ColorYellowWarm).Render(i.Hash[:7]))
 	lineBuilder.WriteString(" ")
@@ -80,11 +120,21 @@ func (d GitCommitLogItemDelegate) Render(w io.Writer, m list.Model, index int, l
 	lineBuilder.WriteString(" ")
 	lineBuilder.WriteString(commitGraphLine.String())
 	lineBuilder.WriteString(" ")
+
+	// Resolved against the live width: a resize only calls SetWidth on the
+	// existing list, so anything cached at build time would be sized for a width
+	// the panel no longer has.
+	if settings.GITTICONFIGSETTINGS.CommitLogShowRefs {
+		if refBlock := refBlockText(i.Refs, componentWidth-lipgloss.Width(lineBuilder.String())); refBlock != "" {
+			lineBuilder.WriteString(style.NewStyle.Foreground(style.GetColor(i.ColorID)).Bold(true).Render(refBlock))
+			lineBuilder.WriteString(" ")
+		}
+	}
+
 	lineBuilder.WriteString(style.NewStyle.Render(i.Message))
 
 	strContent := lineBuilder.String()
 
-	componentWidth := m.Width() - constant.ListItemOrTitleWidthPad
 	needTruncate := false
 
 	if lipgloss.Width(strContent) > componentWidth {
