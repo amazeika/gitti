@@ -154,6 +154,25 @@ func GitInit(repoPath string, initBranchName string) {
 
 // ------------------------------------
 //
+//	Report whether the commit before HEAD exists, which is what a reset to HEAD~1
+//	needs. Git is asked rather than the panel. Once the commit log is widened the
+//	panel holds rows HEAD cannot reach, so counting them would open a popup whose
+//	reset then fails
+//
+// ------------------------------------
+func HasCommitBeforeHead() bool {
+	gitArgs := []string{"rev-parse", "--verify", "--quiet", "HEAD~1"}
+
+	hasCommitBeforeHeadCmdExecutor := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
+	if err := hasCommitBeforeHeadCmdExecutor.Run(); err != nil {
+		return false
+	}
+
+	return true
+}
+
+// ------------------------------------
+//
 //	Related to Git check upstream existence
 //
 // ------------------------------------

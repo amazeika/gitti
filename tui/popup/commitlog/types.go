@@ -159,11 +159,15 @@ func (d GitEditCherryPickDelegate) Render(w io.Writer, m list.Model, index int, 
 
 	firstStr = utils.TruncateString(fmt.Sprintf("%s  |  %s", i.Hash[:7], i.Author), componentWidth)
 	secondStr = utils.TruncateString(fmt.Sprintf("    %s", i.Message), componentWidth)
-	thirdStr = utils.TruncateString(fmt.Sprintf("    %s  %s", i18n.LANGUAGEMAPPING.CherryPickedFromBranch, i.FromBranch), componentWidth)
+	// A commit with nothing to attribute it to leaves the line blank rather than
+	// printing the label with nothing after it.
+	if i.FromBranch != "" {
+		thirdStr = utils.TruncateString(fmt.Sprintf("    %s  %s", i18n.LANGUAGEMAPPING.CherryPickedFromBranch, i.FromBranch), componentWidth)
+		thirdStr = style.ItemStyle.Faint(true).Render(thirdStr)
+	}
 
 	// except for the first string, all other string should be faded
 	secondStr = style.ItemStyle.Faint(true).Render(secondStr)
-	thirdStr = style.ItemStyle.Faint(true).Render(thirdStr)
 
 	str = fmt.Sprintf("%s\n%s\n%s", firstStr, secondStr, thirdStr)
 
@@ -248,6 +252,7 @@ func (d CherryPickOpsOptionDelegate) Render(w io.Writer, m list.Model, index int
 type GitRevertParentOptionSelectionPopUpModel struct {
 	GitRevertParentOption list.Model
 	CommitHash            string
+	CommitRefs            string
 }
 
 // ------------------------------------
@@ -315,5 +320,6 @@ func (d GitRevertParentOptionDelegate) Render(w io.Writer, m list.Model, index i
 // ------------------------------------
 type GitRevertConfirmationPopUpModel struct {
 	CommitHash  string
+	CommitRefs  string
 	ParentOrder int
 }

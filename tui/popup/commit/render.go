@@ -251,14 +251,14 @@ func RenderGitResetToSelectedCommitConfirmPromptPopUp(m *types.GittiModel) strin
 				lipgloss.Left,
 				title,
 				"",
-				style.NewStyle.Foreground(style.ColorPurpleVibrant).Render(popUp.SelectedCommitHash),
+				style.RenderCommitHashWithRefs(popUp.SelectedCommitHash, popUp.SelectedCommitRefs, style.ColorPurpleVibrant, style.PopUpContentWidth(popUpWidth)),
 			)
 		} else {
 			content = lipgloss.JoinVertical(
 				lipgloss.Left,
 				title,
 				"",
-				style.NewStyle.Foreground(style.ColorPurpleVibrant).Render(popUp.SelectedCommitHash),
+				style.RenderCommitHashWithRefs(popUp.SelectedCommitHash, popUp.SelectedCommitRefs, style.ColorPurpleVibrant, style.PopUpContentWidth(popUpWidth)),
 				style.NewStyle.Foreground(style.ColorYellowSoft).Render(popUp.CommitInfoAuthor),
 				style.NewStyle.Foreground(style.ColorYellowWarm).Render(popUp.CommitInfoMessage),
 			)

@@ -6,6 +6,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	"github.com/gohyuhan/gitti/api/git"
 	"github.com/gohyuhan/gitti/i18n"
+	"github.com/gohyuhan/gitti/settings"
 	"github.com/gohyuhan/gitti/tui/component/commitlog"
 	"github.com/gohyuhan/gitti/tui/constant"
 	"github.com/gohyuhan/gitti/tui/style"
@@ -79,7 +80,7 @@ func InitGitCherryPickPopUpModel(m *types.GittiModel, branchName string) {
 				Hash:       commitItem.Hash,
 				Message:    commitItem.Message,
 				Author:     commitItem.Author,
-				FromBranch: branchName,
+				FromBranch: cherryPickSourceLabel(commitItem.Refs, branchName),
 			})
 		}
 	}
@@ -173,7 +174,7 @@ func InitGitEditCherryPickPopUpModel(m *types.GittiModel, selectionIndex int) {
 //	to revert to.
 //
 // ------------------------------------
-func InitGitRevertParentOptionSelectionPopUpModel(m *types.GittiModel, commitHash string, commitParentInfos []git.CommitHashParentInfo) {
+func InitGitRevertParentOptionSelectionPopUpModel(m *types.GittiModel, commitHash string, commitRefs string, commitParentInfos []git.CommitHashParentInfo) {
 	items := make([]list.Item, 0, len(commitParentInfos))
 
 	for index := range commitParentInfos {
@@ -204,6 +205,7 @@ func InitGitRevertParentOptionSelectionPopUpModel(m *types.GittiModel, commitHas
 	popUpModel := &GitRevertParentOptionSelectionPopUpModel{
 		GitRevertParentOption: gRPOL,
 		CommitHash:            commitHash,
+		CommitRefs:            commitRefs,
 	}
 
 	m.PopUpModel = popUpModel
@@ -215,11 +217,29 @@ func InitGitRevertParentOptionSelectionPopUpModel(m *types.GittiModel, commitHas
 //	and the chosen parent order, shown before the revert is executed.
 //
 // ------------------------------------
-func InitGitRevertConfirmationPopUpModel(m *types.GittiModel, commitHash string, parentOrder int) {
+func InitGitRevertConfirmationPopUpModel(m *types.GittiModel, commitHash string, commitRefs string, parentOrder int) {
 	popUpModel := &GitRevertConfirmationPopUpModel{
 		CommitHash:  commitHash,
+		CommitRefs:  commitRefs,
 		ParentOrder: parentOrder,
 	}
 
 	m.PopUpModel = popUpModel
+}
+
+// ------------------------------------
+//
+//	Report what a cherry-pick row says the commit came from. While the walk is
+//	limited to the checked-out history every row really does come from the current
+//	branch, so that is the honest label. Once the log spans every branch it is no
+//	longer true of most rows, and only the commit's own refs can say. A commit
+//	carrying none says nothing, rather than naming a branch it is not on
+//
+// ------------------------------------
+func cherryPickSourceLabel(refs string, checkedOutBranch string) string {
+	if !settings.GITTICONFIGSETTINGS.CommitLogShowAllBranches {
+		return checkedOutBranch
+	}
+
+	return refs
 }

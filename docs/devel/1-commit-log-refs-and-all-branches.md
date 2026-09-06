@@ -2,7 +2,7 @@
 status: in-progress
 issue: 1
 pr: null
-completed: [1, 2, 3]
+completed: [1, 2, 3, 4]
 ---
 
 # Commit Log Ref Decorations and Optional All-Branches History — Design Document
@@ -642,7 +642,7 @@ branch, remote-tracking branch and tag, each labelled by its refs
 **ID:** `4`
 **Goal:** every action that acts on a selected commit shows that commit's refs, and no
 popup asserts a branch provenance it cannot know
-**Tests:** pending
+**Tests:** `api/git/commitlog_test.go`, `tui/popup/commitlog/init_test.go`, `tui/style/style_test.go`
 
 The two popup families behave differently on purpose, and the criteria state which is
 which rather than claiming both are unchanged.

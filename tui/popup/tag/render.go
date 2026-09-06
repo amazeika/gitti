@@ -48,9 +48,12 @@ func RenderCreateTagConfirmationPopUp(m *types.GittiModel) string {
 	popUp, ok := m.PopUpModel.(*CreateTagConfirmationPopUpModel)
 	if ok {
 		popUpWidth := min(constant.MaxCreateTagConfirmationPopUpWidth, int(float64(m.Width)*0.8))
+		// The hash shares its line with the localized label in front of it.
+		availableWidth := style.PopUpValueBudget(popUpWidth, fmt.Sprintf(i18n.LANGUAGEMAPPING.CreateTagConfirmation, style.PopUpValueMarker, "", "", ""), style.PopUpValueMarker)
+
 		content := fmt.Sprintf(
 			i18n.LANGUAGEMAPPING.CreateTagConfirmation,
-			style.NewStyle.Foreground(style.ColorYellowWarm).Render(popUp.CommitHash),
+			style.RenderCommitHashWithRefs(popUp.CommitHash, popUp.CommitRefs, style.ColorYellowWarm, availableWidth),
 			style.NewStyle.Foreground(style.ColorYellowWarm).Render(popUp.CommitMessage),
 			style.NewStyle.Foreground(style.ColorPurpleVibrant).Render(popUp.TagName),
 			style.NewStyle.Foreground(style.ColorBlueMuted).Render(popUp.TagMessage),
