@@ -2,7 +2,7 @@
 status: in-progress
 issue: 1
 pr: null
-completed: [1, 2, 3, 4]
+completed: [1, 2, 3, 4, 5]
 ---
 
 # Commit Log Ref Decorations and Optional All-Branches History — Design Document
