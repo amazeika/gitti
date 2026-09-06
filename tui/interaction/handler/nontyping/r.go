@@ -69,6 +69,7 @@ func handleNonTypingrKeyBindingInteraction(m *types.GittiModel) (*types.GittiMod
 					commitPopUp.InitGitResetToSelectedCommitTypeOptionPopUpModel(
 						m,
 						parsedCommit.Hash,
+						parsedCommit.Refs,
 						parsedCommit.Message,
 						parsedCommit.Author,
 					)
@@ -83,6 +84,7 @@ func handleNonTypingrKeyBindingInteraction(m *types.GittiModel) (*types.GittiMod
 					commitPopUp.InitGitResetToSelectedCommitTypeOptionPopUpModel(
 						m,
 						parsedRefLog.Hash,
+						"",
 						"",
 						"",
 					)

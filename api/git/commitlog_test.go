@@ -451,3 +451,45 @@ func TestGetCommitLogsIsQuietOnAnEmptyRepositoryInAllBranchesMode(t *testing.T) 
 		t.Errorf("an empty repository recorded errors: %v", recorded)
 	}
 }
+
+func TestHasCommitBeforeHeadIsFalseOnAnUnbornHead(t *testing.T) {
+	repositoryUnderTest(t)
+
+	if HasCommitBeforeHead() {
+		t.Error("a repository with no commits reported a commit before HEAD")
+	}
+}
+
+func TestHasCommitBeforeHeadIsFalseOnTheFirstCommit(t *testing.T) {
+	_, run := repositoryUnderTest(t)
+	run("commit", "-q", "--allow-empty", "-m", "first")
+
+	if HasCommitBeforeHead() {
+		t.Error("a repository with one commit reported a commit before HEAD, so a reset to HEAD~1 would fail")
+	}
+}
+
+func TestHasCommitBeforeHeadIsTrueFromTheSecondCommit(t *testing.T) {
+	_, run := repositoryUnderTest(t)
+	run("commit", "-q", "--allow-empty", "-m", "first")
+	run("commit", "-q", "--allow-empty", "-m", "second")
+
+	if !HasCommitBeforeHead() {
+		t.Error("a repository with two commits reported no commit before HEAD")
+	}
+}
+
+func TestHasCommitBeforeHeadIgnoresOtherBranches(t *testing.T) {
+	// The panel can hold rows from branches HEAD cannot reach once all-branches
+	// mode is on, which is exactly what a row count would have miscounted.
+	_, run := repositoryUnderTest(t)
+	run("commit", "-q", "--allow-empty", "-m", "on master")
+	run("switch", "-q", "-c", "feature")
+	run("commit", "-q", "--allow-empty", "-m", "on feature")
+	run("commit", "-q", "--allow-empty", "-m", "also on feature")
+	run("switch", "-q", "master")
+
+	if HasCommitBeforeHead() {
+		t.Error("commits on another branch were counted toward what HEAD~1 can reach")
+	}
+}

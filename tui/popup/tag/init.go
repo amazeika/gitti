@@ -23,7 +23,7 @@ import (
 //	CurrentActiveInputIndex is set to 1 (name field focused first).
 //
 // ------------------------------------
-func InitCreateTagPopUpModel(m *types.GittiModel, commitHash string, commitMessage string) {
+func InitCreateTagPopUpModel(m *types.GittiModel, commitHash string, commitRefs string, commitMessage string) {
 	tagName := ""
 	tagMessage := ""
 	tagNamePlaceholder := i18n.LANGUAGEMAPPING.CreateTagPopUpNameInputPlaceHolder
@@ -49,6 +49,7 @@ func InitCreateTagPopUpModel(m *types.GittiModel, commitHash string, commitMessa
 		TagNameInput:            TagNameInput,
 		TagMessageTextAreaInput: TagMessageTextAreaInput,
 		CommitHash:              commitHash,
+		CommitRefs:              commitRefs,
 		CommitMessage:           commitMessage,
 		CurrentActiveInputIndex: 1,
 		TotalInputCount:         2,
@@ -63,11 +64,12 @@ func InitCreateTagPopUpModel(m *types.GittiModel, commitHash string, commitMessa
 //	these fields to build the localized confirmation string.
 //
 // ------------------------------------
-func InitCreateTagConfirmationPopUpModel(m *types.GittiModel, tagName string, tagMessage string, commitHash string, commitMessage string) {
+func InitCreateTagConfirmationPopUpModel(m *types.GittiModel, tagName string, tagMessage string, commitHash string, commitRefs string, commitMessage string) {
 	popUpModel := &CreateTagConfirmationPopUpModel{
 		TagName:       tagName,
 		TagMessage:    tagMessage,
 		CommitHash:    commitHash,
+		CommitRefs:    commitRefs,
 		CommitMessage: commitMessage,
 	}
 	m.PopUpModel = popUpModel

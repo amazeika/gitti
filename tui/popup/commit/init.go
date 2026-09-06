@@ -203,7 +203,7 @@ func InitGitResetLatestCommitConfirmPromptPopUpModel(m *types.GittiModel, resetT
 //	and author. Attaches an item-count help key; filtering and pagination hidden.
 //
 // ------------------------------------
-func InitGitResetToSelectedCommitTypeOptionPopUpModel(m *types.GittiModel, selectedCommitHash string, commitInfoMessage string, commitInfoAuthor string) {
+func InitGitResetToSelectedCommitTypeOptionPopUpModel(m *types.GittiModel, selectedCommitHash string, selectedCommitRefs string, commitInfoMessage string, commitInfoAuthor string) {
 	gitResetToSelectedCommitTypeOption := []GitResetToSelectedCommitTypeOptionItem{
 		{
 			Name:      i18n.LANGUAGEMAPPING.GitResetSoft,
@@ -243,6 +243,7 @@ func InitGitResetToSelectedCommitTypeOptionPopUpModel(m *types.GittiModel, selec
 	popUpModel := &GitResetToSelectedCommitTypeOptionPopUpModel{
 		ResetToSelectedCommitTypeOptionList: gRSCTOL,
 		SelectedCommitHash:                  selectedCommitHash,
+		SelectedCommitRefs:                  selectedCommitRefs,
 		CommitInfoMessage:                   commitInfoMessage,
 		CommitInfoAuthor:                    commitInfoAuthor,
 	}
@@ -257,10 +258,11 @@ func InitGitResetToSelectedCommitTypeOptionPopUpModel(m *types.GittiModel, selec
 //	can display the appropriate localized confirmation and commit info.
 //
 // ------------------------------------
-func InitGitResetToSelectedCommitConfirmPromptPopUpModel(m *types.GittiModel, resetType string, selectedCommitHash string, commitInfoMessage string, commitInfoAuthor string) {
+func InitGitResetToSelectedCommitConfirmPromptPopUpModel(m *types.GittiModel, resetType string, selectedCommitHash string, selectedCommitRefs string, commitInfoMessage string, commitInfoAuthor string) {
 	popUpModel := &GitResetToSelectedCommitConfirmPromptPopUpModel{
 		GitResetToSelectedCommitType: resetType,
 		SelectedCommitHash:           selectedCommitHash,
+		SelectedCommitRefs:           selectedCommitRefs,
 		CommitInfoMessage:            commitInfoMessage,
 		CommitInfoAuthor:             commitInfoAuthor,
 	}
