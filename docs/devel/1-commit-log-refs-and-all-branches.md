@@ -1,8 +1,8 @@
 ---
-status: in-progress
+status: shipped
 issue: 1
 pr: null
-completed: [1, 2, 3, 4, 5, 6]
+completed: [1, 2, 3, 4, 5, 6, 7]
 ---
 
 # Commit Log Ref Decorations and Optional All-Branches History — Design Document
@@ -770,6 +770,49 @@ tags and remote refs must agree.
       picks up its default and is written back.
 - [ ] **T. Non-boolean guards intact.** `max_commit_log_count: 0` still falls back to
       the default rather than being honoured.
+
+## 5. Test instructions
+
+Automated coverage runs as one command, because `go test` selects by package rather than
+by file:
+
+```bash
+go test -count=1 ./...        # 91 tests across six packages
+go build -o ./bin/gitti .
+```
+
+| Phase | Automated tests |
+| --- | --- |
+| 1 — boolean settings | `settings/settings_test.go` |
+| 2 — ref decorations | `api/git/commitlog_test.go`, `tui/component/commitlog/{types,init}_test.go`, `i18n/i18n_test.go`, `settings/settings_test.go` |
+| 3 — all-branches | `api/git/commitlog_test.go`, `settings/settings_test.go`, `i18n/i18n_test.go` |
+| 4 — commit-targeting actions | `api/git/commitlog_test.go`, `tui/popup/commitlog/init_test.go`, `tui/style/style_test.go` |
+
+Manual validation, against the reference view
+`git log --all --topo-order --decorate=short --graph --oneline -n 100`:
+
+1. **Refs on rows.** In a repository with a branch, a remote and a tag, widen the left panel
+   with `+` until it is about fifty columns. Each commit shows the refs pointing at it
+   between the graph lane and the subject; `HEAD -> <branch>` on the tip, `origin/HEAD`
+   nowhere.
+2. **Filtering.** Press `F` and type part of a branch name. Commits carrying that ref stay
+   visible even when their subject does not contain it.
+3. **Refs off.** Run `gitti --commit-log-show-refs false` and relaunch. Rows look as they did
+   before this feature, and the filter no longer matches branch names.
+4. **All branches.** Run `gitti --commit-log-show-all-branches true` and relaunch in a
+   repository with a diverged branch. Both tips appear, each labelled, and the graph shows
+   the fork. No `WIP on …`, `index on …` or `Notes added by …` rows appear.
+5. **Commit-targeting actions.** Select a decorated commit and press `R` (reset), `Ctrl+R`
+   (revert) or `t` (tag). Each popup names the commit with its refs beside the hash. Repeat
+   on an undecorated commit: each popup reads exactly as it did before.
+6. **Cherry-pick provenance.** With all-branches on, open the cherry-pick picker with
+   `Ctrl+P`. Commits are labelled with their own refs, and a commit with none shows no
+   source line rather than the current branch.
+7. **Reset-latest gate.** In a repository with exactly one commit, press `Shift+R`. Nothing
+   opens. Commit again and it opens. With all-branches on, a repository whose `HEAD` has one
+   commit but whose other branches fill the panel still refuses.
+8. **Fresh repository.** Run `git init` in an empty directory and open gitti. The Commit Log
+   is empty and the log panel shows no error.
 
 ## Outcome
 
