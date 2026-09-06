@@ -2,7 +2,7 @@
 status: in-progress
 issue: 1
 pr: null
-completed: []
+completed: [1]
 ---
 
 # Commit Log Ref Decorations and Optional All-Branches History — Design Document
@@ -298,20 +298,23 @@ writes `false`, and the next launch rewrites it to `true`.
 The repair is presence-detection rather than zero-detection, for booleans only:
 
 ```go
-var raw map[string]json.RawMessage
-json.Unmarshal(data, &raw)          // alongside the existing typed unmarshal
+// A mirror of the struct whose bools are pointers; nil means the key was absent or null.
+mirror := reflect.New(reflect.StructOf(mirroredFields))
+json.Unmarshal(data, mirror.Interface())
 ...
 case reflect.Bool:
-    if v, present := raw[jsonKey]; !present || string(v) == "null" {
-        field.SetBool(defaultField.Bool())
+    if declared == nil {
+        field.Set(defaultField)
         changed = true
+        continue
     }
-    // an explicit false is now preserved
+    field.SetBool(*declared)     // an explicit false is now preserved
 ```
 
-`jsonKey` comes from the field's `json` struct tag, with any `,option` suffix stripped.
-A missing key still takes the default and still triggers a rewrite, so an existing
-config file gains the new keys on first launch after upgrade.
+The mirror carries the same `json` tags, so `encoding/json` — not hand-written key
+matching — decides what each bool field was given. A missing key still takes the default
+and still triggers a rewrite, so an existing config file gains the new keys on first
+launch after upgrade.
 
 Presence-detection is applied **only** to booleans. The `String`, `Int` and `Float64`
 branches keep zero-detection, because for those fields the zero value is not a legitimate
@@ -471,7 +474,7 @@ this host toolchain on every commit.
 **ID:** `1`
 **Goal:** a boolean setting written as `false` survives a restart, so a setting that
 defaults to `true` can be turned off at all
-**Tests:** pending
+**Tests:** `settings/settings_test.go`
 
 This phase is a standalone bug fix with no dependency on the rest of the spec. It ships
 first because every later phase's default-`true` ref toggle is unusable without it, and
@@ -500,20 +503,23 @@ currently stick.
 
 **Steps:**
 
-1. In `InitOrReadConfig`, unmarshal the file a second time into
-   `map[string]json.RawMessage` alongside the existing typed unmarshal, and pass it to
-   `ensureConfigIntegrity`.
-2. Add a `case reflect.Bool:` branch ahead of `default:` implementing presence-detection.
+1. In `InitOrReadConfig`, decode the file a second time through `decodeDeclaredBools`,
+   which mirrors `GittiConfigSettings` with `*bool` fields so `encoding/json` itself
+   reports which bools the file declares, and pass the result to `ensureConfigIntegrity`.
+2. Add a `case reflect.Bool:` branch ahead of `default:` that takes the decoder's answer:
+   a nil pointer means absent or null and takes the default; otherwise the declared value
+   is written to the field.
 3. Write `settings/settings_test.go` covering: explicit `false` preserved, absent key
    defaulted, `null` treated as absent, explicit zero int still defaulted, `time.Time`
-   untouched, and a complete config reporting no change.
+   untouched, a complete config reporting no change, a case-variant key the decoder
+   honours, duplicate-key resolution agreeing with the typed decode, and an
+   `InitOrReadConfig` round trip proving a disabled bool survives a restart.
 
-Note for the implementer: `encoding/json` matches struct keys case-insensitively, but a
-`map[string]json.RawMessage` lookup is exact. A hand-edited `"Auto_Update": false`
-therefore decodes as `false` into the struct yet reads as absent in the raw map, and is
-reset. That matches today's outcome and the subsequent rewrite canonicalises the key, so
-it is not a defect — but it is surprising enough to be worth knowing while reading the
-two decodes side by side.
+Note for the implementer: do not hand-roll the key matching. `encoding/json` resolves
+case-variant spellings, duplicate keys and `null` by rules a raw `map[string]json.RawMessage`
+lookup does not reproduce, and any divergence between the two decodes rewrites the file with
+a value the user never wrote. Decoding into the mirror struct keeps one decoder in charge of
+both answers, so the question cannot arise.
 
 ### Phase 2: Show ref decorations on commit log rows
 

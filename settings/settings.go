@@ -111,8 +111,19 @@ func InitOrReadConfig() {
 		return
 	}
 
+	// A bool's zero value is a legitimate setting, so absence has to be decoded
+	// rather than inferred. Let encoding/json answer it: the same bytes go into a
+	// mirror of the struct whose bools are pointers, which leaves a nil for a key
+	// that is absent or null. Asking the decoder means duplicate keys, case-variant
+	// keys and null all resolve exactly as they did for the typed decode above.
+	declaredBools, err := decodeDeclaredBools(data)
+	if err != nil {
+		writeDefaultConfig(cfgPath)
+		return
+	}
+
 	// Validate and fix missing or invalid fields
-	changed := ensureConfigIntegrity(&cfg, &GittiDefaultConfigSettings)
+	changed := ensureConfigIntegrity(&cfg, &GittiDefaultConfigSettings, declaredBools)
 	if changed {
 		saveConfig(cfgPath, cfg)
 	}
@@ -147,7 +158,7 @@ func InitOrReadConfig() {
 //	Check every field against the default and assign default values if zero
 //
 // ------------------------------------
-func ensureConfigIntegrity(cfg *GittiConfigSettings, def *GittiConfigSettings) bool {
+func ensureConfigIntegrity(cfg *GittiConfigSettings, def *GittiConfigSettings, declaredBools map[int]*bool) bool {
 	cfgVal := reflect.ValueOf(cfg).Elem()
 	defVal := reflect.ValueOf(def).Elem()
 	changed := false
@@ -157,6 +168,20 @@ func ensureConfigIntegrity(cfg *GittiConfigSettings, def *GittiConfigSettings) b
 		defaultField := defVal.Field(i)
 
 		switch field.Kind() {
+		case reflect.Bool:
+			// Take the decoder's answer rather than testing for the zero value:
+			// resetting a zero-valued bool would rewrite every explicit false back
+			// to its default and make a default-true setting impossible to turn off.
+			declared, ok := declaredBools[i]
+			if !ok {
+				continue
+			}
+			if declared == nil {
+				field.Set(defaultField)
+				changed = true
+				continue
+			}
+			field.SetBool(*declared)
 		case reflect.String:
 			if field.String() == "" {
 				field.SetString(defaultField.String())
@@ -181,6 +206,61 @@ func ensureConfigIntegrity(cfg *GittiConfigSettings, def *GittiConfigSettings) b
 		}
 	}
 	return changed
+}
+
+// ------------------------------------
+//
+//	Build the mirror's field list, reporting which mirror fields carry a bool the
+//	decoder can actually answer for. A field the encoder never writes cannot come
+//	back from the decoder, so mirroring it as a pointer would report it absent on
+//	every launch and rewrite the file forever.
+//
+// ------------------------------------
+func mirrorFields(cfgType reflect.Type) ([]reflect.StructField, map[int]int) {
+	mirrored := make([]reflect.StructField, 0, cfgType.NumField())
+	boolFields := make(map[int]int, cfgType.NumField())
+
+	for i := 0; i < cfgType.NumField(); i++ {
+		field := cfgType.Field(i)
+		if field.PkgPath != "" {
+			// Unexported: encoding/json ignores it and reflect.StructOf refuses it.
+			continue
+		}
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if field.Type.Kind() == reflect.Bool && name != "-" {
+			boolFields[len(mirrored)] = i
+			field.Type = reflect.PointerTo(field.Type)
+		}
+		mirrored = append(mirrored, field)
+	}
+	return mirrored, boolFields
+}
+
+// ------------------------------------
+//
+//	Decode the config bytes into a mirror of GittiConfigSettings whose bool fields
+//	are pointers, so encoding/json itself reports which bools the file declares.
+//	A nil means the key was absent or null; anything else is the decoder's own
+//	resolution of duplicate and case-variant spellings.
+//
+// ------------------------------------
+func decodeDeclaredBools(data []byte) (map[int]*bool, error) {
+	mirrored, boolFields := mirrorFields(reflect.TypeOf(GittiConfigSettings{}))
+	mirror := reflect.New(reflect.StructOf(mirrored))
+	if err := json.Unmarshal(data, mirror.Interface()); err != nil {
+		return nil, err
+	}
+
+	declared := make(map[int]*bool, len(boolFields))
+	for mirrorIndex, cfgIndex := range boolFields {
+		value := mirror.Elem().Field(mirrorIndex)
+		if value.IsNil() {
+			declared[cfgIndex] = nil
+			continue
+		}
+		declared[cfgIndex] = value.Interface().(*bool)
+	}
+	return declared, nil
 }
 
 // ------------------------------------
