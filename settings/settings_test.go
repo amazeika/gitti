@@ -333,3 +333,78 @@ func TestMirrorFieldsSkipsWhatTheDecoderCannotAnswer(t *testing.T) {
 		t.Error("a non-bool field was registered for bool presence detection")
 	}
 }
+
+func TestCommitLogShowRefsDefaultsToOn(t *testing.T) {
+	if !GittiDefaultConfigSettings.CommitLogShowRefs {
+		t.Error("commit_log_show_refs defaults to off, so a new user never sees ref decorations")
+	}
+}
+
+func TestInitOrReadConfigKeepsCommitLogShowRefsDisabled(t *testing.T) {
+	configDir := isolateConfigDir(t)
+
+	original := GITTICONFIGSETTINGS
+	t.Cleanup(func() { GITTICONFIGSETTINGS = original })
+
+	appDir := filepath.Join(configDir, constant.APPNAME)
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
+
+	cfgPath := filepath.Join(appDir, "config.json")
+	if err := os.WriteFile(cfgPath, completeConfigBytes(t, map[string]any{"commit_log_show_refs": false}), 0o644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	InitOrReadConfig()
+
+	if GITTICONFIGSETTINGS.CommitLogShowRefs {
+		t.Error("commit_log_show_refs turned off came back on after a restart, so a default-true setting cannot be disabled")
+	}
+}
+
+func TestUpdateCommitLogShowRefsReportsAFailedWrite(t *testing.T) {
+	isolateConfigDir(t)
+
+	original := GITTICONFIGSETTINGS
+	t.Cleanup(func() { GITTICONFIGSETTINGS = original })
+	cfg := GittiDefaultConfigSettings
+	GITTICONFIGSETTINGS = &cfg
+
+	// A directory where the config file belongs makes the write fail the way an
+	// unwritable config directory would. Confirming success here would send the
+	// user away with a setting the next launch discards.
+	cfgPath, err := getConfigPath()
+	if err != nil {
+		t.Fatalf("resolving the config path: %v", err)
+	}
+	if err := os.RemoveAll(cfgPath); err != nil {
+		t.Fatalf("clearing the config path: %v", err)
+	}
+	if err := os.MkdirAll(cfgPath, 0o755); err != nil {
+		t.Fatalf("blocking the config path: %v", err)
+	}
+
+	if err := UpdateCommitLogShowRefs(false); err == nil {
+		t.Error("a config that could not be written was reported as saved")
+	}
+}
+
+func TestUpdateCommitLogShowRefsPersistsTheSetting(t *testing.T) {
+	isolateConfigDir(t)
+
+	original := GITTICONFIGSETTINGS
+	t.Cleanup(func() { GITTICONFIGSETTINGS = original })
+	cfg := GittiDefaultConfigSettings
+	GITTICONFIGSETTINGS = &cfg
+
+	if err := UpdateCommitLogShowRefs(false); err != nil {
+		t.Fatalf("saving the setting: %v", err)
+	}
+
+	InitOrReadConfig()
+
+	if GITTICONFIGSETTINGS.CommitLogShowRefs {
+		t.Error("commit_log_show_refs came back enabled after being turned off and re-read")
+	}
+}

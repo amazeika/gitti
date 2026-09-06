@@ -56,6 +56,7 @@ type LanguageMapping struct {
 	FlagShowXLog                 string
 	FlagOverrideSigningUISuspend string
 	FlagFfMerge                  string
+	FlagCommitLogShowRefs        string
 	// Run Error
 	FailToGetCWD                string
 	TuiRunFail                  string
@@ -96,6 +97,10 @@ type LanguageMapping struct {
 	FfMergeEnabled                   string
 	FfMergeDisabled                  string
 	FfMergeSetError                  string
+	CommitLogShowRefsEnabled         string
+	CommitLogShowRefsDisabled        string
+	CommitLogShowRefsSetError        string
+	CommitLogShowRefsSaveError       string
 	// Gitti UI text
 	Branches                    string
 	ModifiedFiles               string
