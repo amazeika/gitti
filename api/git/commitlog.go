@@ -39,6 +39,7 @@ type GitCommitLog struct {
 	gitCommitLogOutput []CommitLog
 	updateChannel      chan string
 	maxCommitLogCount  string
+	allBranches        bool
 	gitProcessLock     *GitProcessLock
 	logging            *logging.GittiLogging
 }
@@ -54,13 +55,14 @@ type CommitHashParentInfo struct {
 //	Init Git Commit Log
 //
 // ------------------------------------
-func InitGitCommitLog(updateChannel chan string, gitProcessLock *GitProcessLock, maxCommitLogCountInt int, logging *logging.GittiLogging) *GitCommitLog {
+func InitGitCommitLog(updateChannel chan string, gitProcessLock *GitProcessLock, maxCommitLogCountInt int, allBranches bool, logging *logging.GittiLogging) *GitCommitLog {
 	maxCommitLogCount := strconv.Itoa(maxCommitLogCountInt)
 	gitCommitLog := GitCommitLog{
 		gitCommitLogOutput: make([]CommitLog, 0),
 		gitProcessLock:     gitProcessLock,
 		updateChannel:      updateChannel,
 		maxCommitLogCount:  maxCommitLogCount,
+		allBranches:        allBranches,
 		logging:            logging,
 	}
 	return &gitCommitLog
@@ -84,7 +86,7 @@ func (gCL *GitCommitLog) GitCommitLogOutput() []CommitLog {
 // ------------------------------------
 func (gCL *GitCommitLog) GetCommitLogs() {
 	// 1. Prepare git command
-	gitArgs := buildCommitLogArgs(gCL.maxCommitLogCount, false)
+	gitArgs := buildCommitLogArgs(gCL.maxCommitLogCount, gCL.allBranches)
 
 	cmd := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
 	// Use pipe to process line-by-line to avoid loading entire history into memory
