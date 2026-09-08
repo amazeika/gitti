@@ -25,7 +25,7 @@ func handleNonTypingtKeyBindingInteraction(m *types.GittiModel) (*types.GittiMod
 			if currentSelectedCommit != nil {
 				commit := currentSelectedCommit.(commitlog.GitCommitLogItem)
 				m.PopUpType = constant.CreateTagPopUp
-				tagPopUp.InitCreateTagPopUpModel(m, commit.Hash, commit.Message)
+				tagPopUp.InitCreateTagPopUpModel(m, commit.Hash, commit.Refs, commit.Message)
 				m.ShowPopUp.Store(true)
 				m.IsTyping.Store(true)
 			}

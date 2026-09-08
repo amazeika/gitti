@@ -2,6 +2,7 @@ package nontyping
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"github.com/gohyuhan/gitti/api/git"
 	"github.com/gohyuhan/gitti/tui/constant"
 	commitPopUp "github.com/gohyuhan/gitti/tui/popup/commit"
 	"github.com/gohyuhan/gitti/tui/types"
@@ -22,7 +23,7 @@ func handleNonTypingRKeyBindingInteraction(m *types.GittiModel) (*types.GittiMod
 		case constant.CommitLogOrRefLogComponentPanel:
 			switch m.CurrentCommitLogOrRefLogComponentShowing {
 			case constant.SHOW_COMMITLOG:
-				if len(m.CurrentRepoCommitLogInfoList.Items()) > 1 {
+				if git.HasCommitBeforeHead() {
 					commitPopUp.InitGitResetLatestCommitTypeOptionPopUpModel(m)
 					m.ShowPopUp.Store(true)
 					m.IsTyping.Store(false)

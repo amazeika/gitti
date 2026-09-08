@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"image/color"
 	"math"
+	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var (
@@ -158,4 +160,107 @@ func GradientLines(lines []string) []string {
 		colored[i] = style.Render(line)
 	}
 	return colored
+}
+
+const (
+	// The space before the block and its two brackets.
+	commitRefsBlockOverhead = 3
+	// Below this the block would be little more than an ellipsis, so the refs are
+	// dropped instead.
+	commitRefsMinBlockWidth = 8
+	// PopUpBorderStyle draws a thick border, which takes a column on each side of
+	// whatever width the popup is given.
+	popUpBorderWidth = 2
+
+	// PopUpValueMarker stands in for a value while its line is measured. It is a
+	// NUL so it cannot collide with anything a locale actually writes.
+	PopUpValueMarker = "\x00"
+)
+
+// ------------------------------------
+//
+//	Report how much of a popup's width its content actually gets. Budgeting
+//	against the width handed to PopUpBorderStyle would overrun by the border and
+//	wrap the line the budget was meant to keep on one row
+//
+// ------------------------------------
+func PopUpContentWidth(popUpWidth int) int {
+	return max(popUpWidth-popUpBorderWidth, 0)
+}
+
+// ------------------------------------
+//
+//	Report how much room a substituted value has on its own line. A localized
+//	template puts a label in front of the value, and how wide that label is
+//	differs by locale, so a budget taken from the popup width alone overruns by
+//	whatever the label happens to occupy. Pass the template already formatted with
+//	a marker in the value's place
+//
+// ------------------------------------
+func PopUpValueBudget(popUpWidth int, formattedWithMarker string, marker string) int {
+	for _, line := range strings.Split(formattedWithMarker, "\n") {
+		if strings.Contains(line, marker) {
+			label := strings.Replace(line, marker, "", 1)
+			return max(PopUpContentWidth(popUpWidth)-lipgloss.Width(label), 0)
+		}
+	}
+
+	return PopUpContentWidth(popUpWidth)
+}
+
+// ------------------------------------
+//
+//	Render a commit's hash with the refs pointing at it, so a popup that acts on
+//	a commit names it the way the commit log row does. The hash colour is the
+//	caller's, because each popup already had one and a commit carrying no refs has
+//	to render exactly as its bare hash did before
+//
+// ------------------------------------
+func RenderCommitHashWithRefs(commitHash string, refs string, hashColor color.Color, availableWidth int) string {
+	return renderCommitIdentity(commitHash, refs, hashColor, availableWidth, true)
+}
+
+// ------------------------------------
+//
+//	Render a commit's hash with its refs for a template that already brackets the
+//	whole identity. Bracketing the refs again would nest one pair inside another,
+//	and dropping the template's pair instead would change how a commit with no
+//	refs renders
+//
+// ------------------------------------
+func RenderCommitHashWithBareRefs(commitHash string, refs string, hashColor color.Color, availableWidth int) string {
+	return renderCommitIdentity(commitHash, refs, hashColor, availableWidth, false)
+}
+
+// ------------------------------------
+//
+//	Compose the hash and the refs beside it, bounded to the width the line has
+//
+// ------------------------------------
+func renderCommitIdentity(commitHash string, refs string, hashColor color.Color, availableWidth int, bracketRefs bool) string {
+	rendered := NewStyle.Foreground(hashColor).Render(commitHash)
+	if refs == "" {
+		return rendered
+	}
+
+	// The decoration list has no bound: every branch, remote-tracking branch and
+	// tag pointing at the commit appears in it. These popups have no height limit,
+	// so an untruncated list can push a confirmation for a destructive action off
+	// the screen.
+	overhead := 1
+	if bracketRefs {
+		overhead = commitRefsBlockOverhead
+	}
+
+	budget := availableWidth - lipgloss.Width(rendered) - overhead
+	if budget < commitRefsMinBlockWidth {
+		return rendered
+	}
+
+	block := ansi.Truncate(refs, budget, "...")
+	if bracketRefs {
+		block = "[" + block + "]"
+	}
+
+	return rendered + " " + NewStyle.Foreground(ColorPurpleSoft).Bold(true).Render(block)
 }

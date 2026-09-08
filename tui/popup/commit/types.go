@@ -155,6 +155,7 @@ func (d GitResetLatestCommitTypeOptionDelegate) Render(w io.Writer, m list.Model
 type GitResetToSelectedCommitTypeOptionPopUpModel struct {
 	ResetToSelectedCommitTypeOptionList list.Model
 	SelectedCommitHash                  string
+	SelectedCommitRefs                  string
 	CommitInfoMessage                   string
 	CommitInfoAuthor                    string
 }
@@ -169,6 +170,7 @@ type GitResetToSelectedCommitTypeOptionPopUpModel struct {
 type GitResetToSelectedCommitConfirmPromptPopUpModel struct {
 	GitResetToSelectedCommitType string
 	SelectedCommitHash           string
+	SelectedCommitRefs           string
 	CommitInfoMessage            string
 	CommitInfoAuthor             string
 }

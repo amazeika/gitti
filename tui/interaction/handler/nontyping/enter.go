@@ -360,7 +360,7 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 				selectedResetToSelectedCommitType := popUp.ResetToSelectedCommitTypeOptionList.SelectedItem()
 				if selectedResetToSelectedCommitType != nil {
 					resetType := selectedResetToSelectedCommitType.(commitPopUp.GitResetToSelectedCommitTypeOptionItem).ResetType
-					commitPopUp.InitGitResetToSelectedCommitConfirmPromptPopUpModel(m, resetType, popUp.SelectedCommitHash, popUp.CommitInfoMessage, popUp.CommitInfoAuthor)
+					commitPopUp.InitGitResetToSelectedCommitConfirmPromptPopUpModel(m, resetType, popUp.SelectedCommitHash, popUp.SelectedCommitRefs, popUp.CommitInfoMessage, popUp.CommitInfoAuthor)
 					_, ok = m.PopUpModel.(*commitPopUp.GitResetToSelectedCommitConfirmPromptPopUpModel)
 					if ok {
 						m.PopUpType = constant.GitResetToSelectedCommitConfirmPromptPopUp
@@ -610,9 +610,9 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 				selectedParent := popUp.GitRevertParentOption.SelectedItem()
 				if selectedParent != nil {
 					parsedSelectedParent := selectedParent.(commitLogPopUp.GitRevertParentOptionItem)
-					commitLogPopUp.InitGitRevertConfirmationPopUpModel(m, popUp.CommitHash, parsedSelectedParent.ParentOrder)
+					commitLogPopUp.InitGitRevertConfirmationPopUpModel(m, popUp.CommitHash, popUp.CommitRefs, parsedSelectedParent.ParentOrder)
 				} else {
-					commitLogPopUp.InitGitRevertConfirmationPopUpModel(m, popUp.CommitHash, 1)
+					commitLogPopUp.InitGitRevertConfirmationPopUpModel(m, popUp.CommitHash, popUp.CommitRefs, 1)
 				}
 				m.ShowPopUp.Store(true)
 				m.IsTyping.Store(false)
