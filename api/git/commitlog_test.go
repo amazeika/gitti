@@ -298,11 +298,13 @@ func TestGetCommitLogsAttachesRefsToEachCommit(t *testing.T) {
 	if len(commits) != 2 {
 		t.Fatalf("read %d commits, want 2", len(commits))
 	}
-	if !strings.Contains(commits[0].Refs, "HEAD -> master") {
-		t.Errorf("tip Refs = %q, want the HEAD decoration", commits[0].Refs)
+	// Namespace-qualified: --decorate=full is what lets a remote branch be told
+	// apart from a local branch of the same name.
+	if !strings.Contains(commits[0].Refs, "HEAD -> refs/heads/master") {
+		t.Errorf("tip Refs = %q, want the HEAD decoration with its full refname", commits[0].Refs)
 	}
-	if !strings.Contains(commits[1].Refs, "tag: v0.1.0") {
-		t.Errorf("tagged commit Refs = %q, want the tag decoration", commits[1].Refs)
+	if !strings.Contains(commits[1].Refs, "refs/tags/v0.1.0") {
+		t.Errorf("tagged commit Refs = %q, want the tag decoration with its full refname", commits[1].Refs)
 	}
 	if recorded := errorLogs(gittiLogging); recorded != nil {
 		t.Errorf("a healthy repository recorded errors: %v", recorded)
