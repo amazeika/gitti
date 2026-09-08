@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"charm.land/lipgloss/v2"
+
 	"github.com/gohyuhan/gitti/i18n"
 	"github.com/gohyuhan/gitti/tui/constant"
 	"github.com/gohyuhan/gitti/tui/style"
@@ -136,7 +137,11 @@ func RenderGitRevertConfirmationPopUp(m *types.GittiModel) string {
 	popUp, ok := m.PopUpModel.(*GitRevertConfirmationPopUpModel)
 	if ok {
 		popUpWidth := min(constant.MaxGitRevertConfirmationPopUpWidth, int(float64(m.Width)*0.8))
-		return style.PopUpBorderStyle.Width(popUpWidth).Render(fmt.Sprintf(i18n.LANGUAGEMAPPING.GitRevertConfirmationTitle, style.NewStyle.Foreground(style.ColorYellowWarm).Render(popUp.CommitHash)))
+		// The commit shares its line with whatever the localized title puts in front
+		// of it, so the budget is what is left after that, not the whole popup.
+		availableWidth := style.PopUpValueBudget(popUpWidth, fmt.Sprintf(i18n.LANGUAGEMAPPING.GitRevertConfirmationTitle, style.PopUpValueMarker), style.PopUpValueMarker)
+
+		return style.PopUpBorderStyle.Width(popUpWidth).Render(fmt.Sprintf(i18n.LANGUAGEMAPPING.GitRevertConfirmationTitle, style.RenderCommitHashWithBareRefs(popUp.CommitHash, popUp.CommitRefs, style.ColorYellowWarm, availableWidth)))
 	}
 	return ""
 }

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,6 +28,7 @@ type CherryPickedCommitLog struct {
 type CommitLog struct {
 	Hash         string
 	Parents      []string
+	Refs         string
 	Message      string
 	Author       string
 	LaneCharInfo []Cell
@@ -36,6 +39,7 @@ type GitCommitLog struct {
 	gitCommitLogOutput []CommitLog
 	updateChannel      chan string
 	maxCommitLogCount  string
+	allBranches        bool
 	gitProcessLock     *GitProcessLock
 	logging            *logging.GittiLogging
 }
@@ -51,13 +55,14 @@ type CommitHashParentInfo struct {
 //	Init Git Commit Log
 //
 // ------------------------------------
-func InitGitCommitLog(updateChannel chan string, gitProcessLock *GitProcessLock, maxCommitLogCountInt int, logging *logging.GittiLogging) *GitCommitLog {
+func InitGitCommitLog(updateChannel chan string, gitProcessLock *GitProcessLock, maxCommitLogCountInt int, allBranches bool, logging *logging.GittiLogging) *GitCommitLog {
 	maxCommitLogCount := strconv.Itoa(maxCommitLogCountInt)
 	gitCommitLog := GitCommitLog{
 		gitCommitLogOutput: make([]CommitLog, 0),
 		gitProcessLock:     gitProcessLock,
 		updateChannel:      updateChannel,
 		maxCommitLogCount:  maxCommitLogCount,
+		allBranches:        allBranches,
 		logging:            logging,
 	}
 	return &gitCommitLog
@@ -81,15 +86,7 @@ func (gCL *GitCommitLog) GitCommitLogOutput() []CommitLog {
 // ------------------------------------
 func (gCL *GitCommitLog) GetCommitLogs() {
 	// 1. Prepare git command
-	gitArgs := []string{
-		"log",
-		"--topo-order",
-		"--no-decorate",
-		"--no-notes",
-		"--pretty=format:%H%x00%P%x00%s%x00%an",
-		"-n", gCL.maxCommitLogCount,
-		"--",
-	}
+	gitArgs := buildCommitLogArgs(gCL.maxCommitLogCount, gCL.allBranches)
 
 	cmd := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
 	// Use pipe to process line-by-line to avoid loading entire history into memory
@@ -104,28 +101,116 @@ func (gCL *GitCommitLog) GetCommitLogs() {
 		return
 	}
 
-	scanner := bufio.NewScanner(stdout)
+	// 2. Process commits
+	gitCommitLogOutput, scanErr := scanCommitLogs(stdout)
+
+	// 3. Reap the child before anything else. RegisterNewLog ends in a send to a
+	// bounded channel, so logging first would let a stalled UI consumer block the
+	// very cleanup this exists to guarantee.
+	waitErr := drainAndWait(cmd, stdout, scanErr)
+
+	if scanErr != nil {
+		gCL.logging.RegisterNewLog(logging.COMMIT_LOG_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.COMMIT_LOG_OPS, scanErr.Error()), true)
+	} else if waitErr != nil {
+		// After a scan error the child was killed deliberately, so its exit status
+		// only restates the failure already logged above.
+		gCL.logging.RegisterNewLog(logging.COMMIT_LOG_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.COMMIT_LOG_OPS, waitErr.Error()), true)
+	}
+
+	// 4. Publish only a complete read. The panel has no error state, so installing
+	// a truncated history would silently present a failed refresh as the whole
+	// repository; keeping the last good graph is the honest failure.
+	if scanErr != nil || waitErr != nil {
+		return
+	}
+
+	gCL.gitCommitLogOutput = gitCommitLogOutput
+}
+
+// ------------------------------------
+//
+//	Build the git log arguments for the commit log panel, optionally widening the
+//	walk to every local branch, remote-tracking branch and tag
+//
+// ------------------------------------
+func buildCommitLogArgs(maxCommitLogCount string, allBranches bool) []string {
+	// The decoration set is pinned rather than left to git's defaults: a user's
+	// log.excludeDecoration or log.initialDecorationSet would otherwise decide
+	// which refs the panel can show. An explicit --decorate-refs overrides both.
+	gitArgs := []string{
+		"log",
+		"--topo-order",
+		// --decorate=full makes %D write namespace-qualified refnames. The short
+		// form is ambiguous: "origin/x" could be a remote branch or a local branch
+		// literally named that, and telling them apart is what lets a pushed
+		// branch's duplicate entry be collapsed rather than printed twice.
+		"--decorate=full",
+		"--decorate-refs=HEAD",
+		"--decorate-refs=refs/heads/*",
+		"--decorate-refs=refs/remotes/*",
+		"--decorate-refs=refs/tags/*",
+		"--decorate-refs-exclude=refs/remotes/*/HEAD",
+		"--no-notes",
+		"--pretty=format:%H%x00%P%x00%D%x00%s%x00%an",
+		"-n", maxCommitLogCount,
+	}
+
+	if allBranches {
+		gitArgs = append(gitArgs, "--branches", "--remotes", "--tags")
+	}
+
+	// --ignore-missing keeps an unborn HEAD from aborting the walk. Without it a
+	// freshly initialised repository exits 128, which the panel now surfaces as an
+	// error on every refresh; with it the walk degrades to whatever refs exist.
+	gitArgs = append(gitArgs, "--ignore-missing", "HEAD")
+
+	return append(gitArgs, "--")
+}
+
+// ------------------------------------
+//
+//	Parse one NUL-separated git log line into a commit, reporting false for a line
+//	that does not carry all five fields
+//
+// ------------------------------------
+func parseCommitLogLine(line string) (CommitLog, bool) {
+	parts := strings.SplitN(line, SEPARATOR, 5)
+	if len(parts) < 5 {
+		return CommitLog{}, false
+	}
+
+	cL := CommitLog{
+		Hash:    parts[0],
+		Refs:    parts[2],
+		Message: parts[3],
+		Author:  parts[4],
+	}
+	if utf8.RuneCountInString(parts[1]) > 0 {
+		cL.Parents = strings.Fields(parts[1])
+	}
+
+	return cL, true
+}
+
+// ------------------------------------
+//
+//	Read git log output line by line, rendering each commit's lane as it arrives,
+//	and report any read error rather than silently returning a truncated history
+//
+// ------------------------------------
+func scanCommitLogs(reader io.Reader) ([]CommitLog, error) {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, COMMIT_LOG_SCAN_BUFFER_BYTES), COMMIT_LOG_SCAN_MAX_LINE_BYTES)
+
 	renderer := NewGraphRenderer()
 	gitCommitLogOutput := make([]CommitLog, 0)
-	// 2. Process Commits
+
 	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.SplitN(line, SEPARATOR, 4)
-		if len(parts) < 4 {
+		cL, ok := parseCommitLogLine(scanner.Text())
+		if !ok {
 			continue
 		}
 
-		// Parse commit
-		cL := CommitLog{
-			Hash:    parts[0],
-			Message: parts[2],
-			Author:  parts[3],
-		}
-		if utf8.RuneCountInString(parts[1]) > 0 {
-			cL.Parents = strings.Fields(parts[1])
-		}
-
-		// 3. Render
 		// The renderer returns the commit lane string
 		laneCharInfo, colorID := renderer.RenderCommit(cL)
 
@@ -134,7 +219,24 @@ func (gCL *GitCommitLog) GetCommitLogs() {
 		gitCommitLogOutput = append(gitCommitLogOutput, cL)
 	}
 
-	gCL.gitCommitLogOutput = gitCommitLogOutput
+	return gitCommitLogOutput, scanner.Err()
+}
+
+// ------------------------------------
+//
+//	Close out a streamed git command: kill the child when the read stopped early,
+//	drain whatever is left in the pipe, then wait. Skipping the drain deadlocks
+//	the caller against a child blocked writing into a full pipe
+//
+// ------------------------------------
+func drainAndWait(cmd *exec.Cmd, stdout io.Reader, scanErr error) error {
+	if scanErr != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+
+	_, _ = io.Copy(io.Discard, stdout)
+
+	return cmd.Wait()
 }
 
 // ------------------------------------

@@ -50,6 +50,8 @@ Gitti is built for terminal-focused developers who need visual Git operations wi
 - 📡 **Manual Fetch** - Trigger fetch all on demand
 - 🔏 **Commit & Tag Signing** - GPG and SSH signing support
 - 📊 **Commit Log & Branch Graph** - Visualize commit history with branching graph
+- 🏷️ **Commit Log Ref Decorations** - See the branches, remotes, tags and `HEAD` pointing at each commit, and filter by them
+- 🌴 **All-Branches History** - Optionally widen the Commit Log to every local branch, remote-tracking branch and tag
 - 🔎 **Reflog** - Browse and restore from Git reference logs
 - 🫵 **Git Blame** - View line-by-line blame with commit author and message
 - 🔦 **List Filtering** - Filter the branch, tag, remote, worktree, file, commit log, reflog, and stash lists with `F`
@@ -217,6 +219,53 @@ gitti --init-dbranch main
 # For global Git configuration that will be set to gitti and system git
 gitti --init-dbranch main --global
 ```
+
+Configure the Commit Log:
+
+```bash
+# Show the branches, remotes, tags and HEAD pointing at each commit (default: true)
+gitti --commit-log-show-refs false
+
+# Walk every local branch, remote-tracking branch and tag rather than the
+# checked-out history alone (default: false). Takes effect on restart.
+gitti --commit-log-show-all-branches true
+```
+
+Ref decorations appear beside the commit subject in a compact form:
+
+| Shown | Meaning |
+| --- | --- |
+| `*main` | `main` is the branch you have checked out |
+| `main^` | a remote has this commit too, so the branch is pushed |
+| `*main^` | both of the above |
+| `origin/release` | exists only on the remote; there is no local branch of that name |
+| `v0.9.0` | a tag |
+| `*HEAD` | detached `HEAD`; the commit hash is in the row's first column |
+
+`*` appears at most once in the whole log, which is most useful in all-branches mode where
+many branch tips are on screen at once. A branch that lives on several remotes still shows
+a single `^`.
+
+Filtering is not narrowed by what a row draws: a pushed branch renders as `main^`, but
+pressing `F` and typing either `main` or `origin/main` isolates its commits.
+
+Refs need room. On a narrow left panel the subject keeps priority and the block is dropped,
+so widen the panel with `+` or use a wider terminal. At the default panel ratio refs appear
+from about a 120-column terminal; on an 80-column terminal press `+` until the panel is
+about half the width.
+
+The commit limit (`--max-commit-log-count`) applies across the union in all-branches mode,
+not per branch, so a repository with many branches shows fewer commits from each.
+
+> **Upgrading from v0.9.0 or earlier?** Settings you had turned **off** were being
+> overwritten on disk at every launch, so they never survived a restart. That is fixed, but
+> the fix cannot recover a value that was already replaced. If you had turned any of these
+> off, set them again once after upgrading:
+>
+> ```bash
+> gitti --auto-update false
+> gitti --allow-commit-graph-write false
+> ```
 
 ## Changelog
 

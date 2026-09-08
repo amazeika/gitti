@@ -73,7 +73,7 @@ func handleTypingCtrleKeyBindingInteraction(m *types.GittiModel) (*types.GittiMo
 			}
 			m.ShowPopUp.Store(true)
 			m.IsTyping.Store(false)
-			tagPopUp.InitCreateTagConfirmationPopUpModel(m, popUp.TagNameInput.Value(), popUp.TagMessageTextAreaInput.Value(), popUp.CommitHash, popUp.CommitMessage)
+			tagPopUp.InitCreateTagConfirmationPopUpModel(m, popUp.TagNameInput.Value(), popUp.TagMessageTextAreaInput.Value(), popUp.CommitHash, popUp.CommitRefs, popUp.CommitMessage)
 			m.PopUpType = constant.CreateTagConfirmationPopUp
 		}
 	case constant.InteractiveRebaseFixupSquashCommitPopUp:

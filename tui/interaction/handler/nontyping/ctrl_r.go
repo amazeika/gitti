@@ -30,18 +30,18 @@ func handleNonTypingCtrlrKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 					commitHashParentInfos := services.GetCommitHashParentInfoService(m, parsedCommitLog.Hash)
 					if commitHashParentInfos != nil {
 						if len(commitHashParentInfos) > 1 {
-							commitLogPopUp.InitGitRevertParentOptionSelectionPopUpModel(m, parsedCommitLog.Hash, commitHashParentInfos)
+							commitLogPopUp.InitGitRevertParentOptionSelectionPopUpModel(m, parsedCommitLog.Hash, parsedCommitLog.Refs, commitHashParentInfos)
 							m.ShowPopUp.Store(true)
 							m.IsTyping.Store(false)
 							m.PopUpType = constant.GitRevertParentOptionSelectionPopUp
 						} else {
-							commitLogPopUp.InitGitRevertConfirmationPopUpModel(m, parsedCommitLog.Hash, 0)
+							commitLogPopUp.InitGitRevertConfirmationPopUpModel(m, parsedCommitLog.Hash, parsedCommitLog.Refs, 0)
 							m.ShowPopUp.Store(true)
 							m.IsTyping.Store(false)
 							m.PopUpType = constant.GitRevertConfirmationPopUp
 						}
 					} else {
-						commitLogPopUp.InitGitRevertConfirmationPopUpModel(m, parsedCommitLog.Hash, 0)
+						commitLogPopUp.InitGitRevertConfirmationPopUpModel(m, parsedCommitLog.Hash, parsedCommitLog.Refs, 0)
 						m.ShowPopUp.Store(true)
 						m.IsTyping.Store(false)
 						m.PopUpType = constant.GitRevertConfirmationPopUp
