@@ -69,6 +69,7 @@ func main() {
 	setShowXLog := flag.Int("show-x-log", 0, i18n.LANGUAGEMAPPING.FlagShowXLog)
 	overrideSigningUISuspend := flag.String("override-signing-ui-suspend", "", i18n.LANGUAGEMAPPING.FlagOverrideSigningUISuspend)
 	ffMerge := flag.String("ff-merge", "", i18n.LANGUAGEMAPPING.FlagFfMerge)
+	commitLogShowRefs := flag.String("commit-log-show-refs", "", i18n.LANGUAGEMAPPING.FlagCommitLogShowRefs)
 
 	flag.Parse()
 
@@ -104,6 +105,8 @@ func main() {
 		config.SetOverrideSigningUISuspend(*overrideSigningUISuspend)
 	case *ffMerge != "":
 		config.SetFfMerge(*ffMerge)
+	case *commitLogShowRefs != "":
+		config.SetCommitLogShowRefs(*commitLogShowRefs)
 	default:
 		// gitti don't support any bare repo at the moment
 		if api.IsBareRepo() {

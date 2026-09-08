@@ -89,6 +89,9 @@ const (
 // Stream and update configurations
 const (
 	STREAMUPDATETHROTTLEMS = 150 // Frequency in milliseconds to throttle UI updates for streaming output
+
+	COMMIT_LOG_SCAN_BUFFER_BYTES   = 64 * 1024 // Initial per-line read buffer for the streamed commit log
+	COMMIT_LOG_SCAN_MAX_LINE_BYTES = 4 << 20   // Ceiling for one commit log line; beyond it the read stops with an error instead of growing without bound
 )
 
 // Diff retrieval types

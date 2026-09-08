@@ -2,6 +2,7 @@ package settings
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -40,6 +41,7 @@ type GittiConfigSettings struct {
 	ShowXLog                        int       `json:"show_x_log"`
 	OverrideSigningUISuspend        bool      `json:"override_signing_ui_suspend"`
 	FfMerge                         bool      `json:"ff_merge"`
+	CommitLogShowRefs               bool      `json:"commit_log_show_refs"`
 }
 
 var GittiDefaultConfigSettings = GittiConfigSettings{
@@ -60,6 +62,7 @@ var GittiDefaultConfigSettings = GittiConfigSettings{
 	ShowXLog:                        3,
 	OverrideSigningUISuspend:        false,
 	FfMerge:                         false,
+	CommitLogShowRefs:               true,
 }
 
 // ------------------------------------
@@ -274,19 +277,36 @@ func writeDefaultConfig(cfgPath string) {
 
 // ------------------------------------
 //
-//	Persist the given config settings to disk as JSON
+//	Persist the given config settings to disk as JSON, reporting why the write
+//	failed so a caller that can tell the user does not have to guess
 //
 // ------------------------------------
-func saveConfig(cfgPath string, cfg GittiConfigSettings) {
+func writeConfig(cfgPath string, cfg GittiConfigSettings) error {
 	file, err := os.Create(cfgPath)
 	if err != nil {
-		return
+		return fmt.Errorf("creating %s: %w", cfgPath, err)
 	}
 	defer file.Close()
 
 	enc := json.NewEncoder(file)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(cfg)
+	if err := enc.Encode(cfg); err != nil {
+		return fmt.Errorf("writing %s: %w", cfgPath, err)
+	}
+
+	return nil
+}
+
+// ------------------------------------
+//
+//	Persist the given config settings without reporting a failure, for the call
+//	sites that have no error path of their own. Several are CLI setters that
+//	confirm success regardless; closing that gap across all of them is a separate
+//	change
+//
+// ------------------------------------
+func saveConfig(cfgPath string, cfg GittiConfigSettings) {
+	_ = writeConfig(cfgPath, cfg)
 }
 
 // ------------------------------------
@@ -446,4 +466,21 @@ func UpdateFfMerge(ffMerge bool) {
 	if err == nil {
 		saveConfig(cfgPath, *GITTICONFIGSETTINGS)
 	}
+}
+
+// ------------------------------------
+//
+//	Update and persist whether the commit log shows ref decorations, reporting a
+//	failure rather than leaving the flag to confirm a setting that never reached
+//	disk
+//
+// ------------------------------------
+func UpdateCommitLogShowRefs(showRefs bool) error {
+	GITTICONFIGSETTINGS.CommitLogShowRefs = showRefs
+	cfgPath, err := getConfigPath()
+	if err != nil {
+		return fmt.Errorf("resolving the config path: %w", err)
+	}
+
+	return writeConfig(cfgPath, *GITTICONFIGSETTINGS)
 }
