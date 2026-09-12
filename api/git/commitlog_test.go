@@ -26,7 +26,7 @@ func commitLogLine(hash, parents, refs, subject, author string) string {
 }
 
 func TestBuildCommitLogArgsRequestsRefDecorations(t *testing.T) {
-	gitArgs := buildCommitLogArgs("2500", false)
+	gitArgs := buildCommitLogArgs("2500", false, false)
 
 	if !slices.Contains(gitArgs, "--pretty=format:%H%x00%P%x00%D%x00%s%x00%an") {
 		t.Errorf("the pretty format does not carry the ref field: %v", gitArgs)
@@ -48,7 +48,7 @@ func TestBuildCommitLogArgsRequestsRefDecorations(t *testing.T) {
 }
 
 func TestBuildCommitLogArgsWalksOnlyHeadByDefault(t *testing.T) {
-	gitArgs := buildCommitLogArgs("2500", false)
+	gitArgs := buildCommitLogArgs("2500", false, false)
 
 	for _, unwanted := range []string{"--branches", "--remotes", "--tags"} {
 		if slices.Contains(gitArgs, unwanted) {
@@ -61,7 +61,7 @@ func TestBuildCommitLogArgsSurvivesAnUnbornHeadInBothModes(t *testing.T) {
 	// git exits 128 on an unborn HEAD without this, and the panel now surfaces
 	// that exit status as an error on every refresh.
 	for _, allBranches := range []bool{false, true} {
-		gitArgs := buildCommitLogArgs("2500", allBranches)
+		gitArgs := buildCommitLogArgs("2500", allBranches, false)
 
 		if !slices.Contains(gitArgs, "--ignore-missing") {
 			t.Errorf("allBranches=%v: a fresh repository would abort the whole walk: %v", allBranches, gitArgs)
@@ -76,7 +76,7 @@ func TestBuildCommitLogArgsSurvivesAnUnbornHeadInBothModes(t *testing.T) {
 }
 
 func TestBuildCommitLogArgsWalksEveryRefWhenAsked(t *testing.T) {
-	gitArgs := buildCommitLogArgs("2500", true)
+	gitArgs := buildCommitLogArgs("2500", true, false)
 
 	for _, want := range []string{"--branches", "--remotes", "--tags"} {
 		if !slices.Contains(gitArgs, want) {
@@ -85,6 +85,25 @@ func TestBuildCommitLogArgsWalksEveryRefWhenAsked(t *testing.T) {
 	}
 	if gitArgs[len(gitArgs)-1] != "--" {
 		t.Errorf("the revision arguments must precede the pathspec separator, got %v", gitArgs)
+	}
+}
+
+func TestBuildCommitLogArgsAddsVerifiedUpstreamToDefaultWalk(t *testing.T) {
+	gitArgs := buildCommitLogArgs("2500", false, true)
+
+	if !slices.Contains(gitArgs, "@{upstream}") {
+		t.Errorf("the verified upstream is absent from the default walk: %v", gitArgs)
+	}
+	if slices.Index(gitArgs, "@{upstream}") > slices.Index(gitArgs, "--") {
+		t.Errorf("the upstream after -- is parsed as a pathspec: %v", gitArgs)
+	}
+}
+
+func TestBuildCommitLogArgsDoesNotAddUpstreamToAllBranchesWalk(t *testing.T) {
+	gitArgs := buildCommitLogArgs("2500", true, true)
+
+	if slices.Contains(gitArgs, "@{upstream}") {
+		t.Errorf("the all-branches walk does not need a duplicate upstream revision: %v", gitArgs)
 	}
 }
 
@@ -376,6 +395,52 @@ func TestGetCommitLogsWalksOnlyHeadWhenAllBranchesIsOff(t *testing.T) {
 	}
 	if commits[0].Message != "on master" {
 		t.Errorf("read %q, want the commit on the checked-out branch", commits[0].Message)
+	}
+}
+
+func TestGetCommitLogsIncludesIncomingUpstreamCommits(t *testing.T) {
+	_, run := repositoryUnderTest(t)
+	run("commit", "-q", "--allow-empty", "-m", "shared")
+	run("switch", "-q", "-c", "incoming")
+	run("commit", "-q", "--allow-empty", "-m", "upstream only")
+	run("remote", "add", "origin", "https://example.com/repository.git")
+	run("update-ref", "refs/remotes/origin/master", "HEAD")
+	run("switch", "-q", "master")
+	run("branch", "--set-upstream-to=origin/master", "master")
+	run("branch", "-D", "incoming")
+
+	gitCommitLog, gittiLogging := commitLogUnderTest(t, false)
+	gitCommitLog.GetCommitLogs()
+
+	commits := gitCommitLog.GitCommitLogOutput()
+	if len(commits) != 2 {
+		t.Fatalf("read %d commits, want HEAD and its incoming upstream commit", len(commits))
+	}
+	if commits[0].Message != "upstream only" {
+		t.Errorf("first commit = %q, want the incoming upstream tip", commits[0].Message)
+	}
+	if !strings.Contains(commits[0].Refs, "refs/remotes/origin/master") {
+		t.Errorf("incoming tip Refs = %q, want its remote-tracking decoration", commits[0].Refs)
+	}
+	if recorded := errorLogs(gittiLogging); recorded != nil {
+		t.Errorf("a branch behind its upstream recorded errors: %v", recorded)
+	}
+}
+
+func TestGetCommitLogsDoesNotRequireAnUpstreamOnDetachedHead(t *testing.T) {
+	_, run := repositoryUnderTest(t)
+	run("commit", "-q", "--allow-empty", "-m", "first")
+	run("switch", "-q", "--detach", "HEAD")
+
+	gitCommitLog, gittiLogging := commitLogUnderTest(t, false)
+	gitCommitLog.GetCommitLogs()
+
+	commits := gitCommitLog.GitCommitLogOutput()
+	if len(commits) != 1 || commits[0].Message != "first" {
+		t.Errorf("detached HEAD returned commits %v, want its existing history", commits)
+	}
+	if recorded := errorLogs(gittiLogging); recorded != nil {
+		t.Errorf("a detached HEAD recorded errors: %v", recorded)
 	}
 }
 

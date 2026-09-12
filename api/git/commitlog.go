@@ -86,7 +86,8 @@ func (gCL *GitCommitLog) GitCommitLogOutput() []CommitLog {
 // ------------------------------------
 func (gCL *GitCommitLog) GetCommitLogs() {
 	// 1. Prepare git command
-	gitArgs := buildCommitLogArgs(gCL.maxCommitLogCount, gCL.allBranches)
+	includeUpstream := !gCL.allBranches && commitLogHasUpstream()
+	gitArgs := buildCommitLogArgs(gCL.maxCommitLogCount, gCL.allBranches, includeUpstream)
 
 	cmd := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
 	// Use pipe to process line-by-line to avoid loading entire history into memory
@@ -133,7 +134,7 @@ func (gCL *GitCommitLog) GetCommitLogs() {
 //	walk to every local branch, remote-tracking branch and tag
 //
 // ------------------------------------
-func buildCommitLogArgs(maxCommitLogCount string, allBranches bool) []string {
+func buildCommitLogArgs(maxCommitLogCount string, allBranches bool, includeUpstream bool) []string {
 	// The decoration set is pinned rather than left to git's defaults: a user's
 	// log.excludeDecoration or log.initialDecorationSet would otherwise decide
 	// which refs the panel can show. An explicit --decorate-refs overrides both.
@@ -163,8 +164,23 @@ func buildCommitLogArgs(maxCommitLogCount string, allBranches bool) []string {
 	// freshly initialised repository exits 128, which the panel now surfaces as an
 	// error on every refresh; with it the walk degrades to whatever refs exist.
 	gitArgs = append(gitArgs, "--ignore-missing", "HEAD")
+	if !allBranches && includeUpstream {
+		gitArgs = append(gitArgs, "@{upstream}")
+	}
 
 	return append(gitArgs, "--")
+}
+
+// ------------------------------------
+//
+//	Report whether the checked-out branch has a resolvable upstream. @{upstream}
+//	is fatal in git log when it is unset, and --ignore-missing does not forgive a
+//	bad revision, so the default walk must probe before adding it
+//
+// ------------------------------------
+func commitLogHasUpstream() bool {
+	gitArgs := []string{"rev-parse", "-q", "--verify", "@{upstream}"}
+	return executor.GittiCmdExecutor.RunGitCmd(gitArgs, false).Run() == nil
 }
 
 // ------------------------------------
