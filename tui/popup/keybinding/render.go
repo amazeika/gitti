@@ -160,6 +160,14 @@ func renderSelectedComponentKeyBindingPart(m *types.GittiModel, contentLine *str
 		return
 	}
 
+	if m.CurrentSelectedComponent != constant.LogComponentPanel {
+		selectedComponenti18nKeybinding = append(selectedComponenti18nKeybinding, i18n.KeyBindingMappingFormat{
+			KeyBindingLine:  i18n.LANGUAGEMAPPING.PageNavigationKey,
+			TitleOrInfoLine: i18n.LANGUAGEMAPPING.PageNavigationDescription,
+			LineType:        i18n.INFO,
+		})
+	}
+
 	if *selectedComponentKeyBindingKeyMapLargestLen < 1 {
 		maxLen := 0
 		for index := range selectedComponenti18nKeybinding {

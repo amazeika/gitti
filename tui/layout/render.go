@@ -454,6 +454,8 @@ func renderKeyBindingComponentPanel(width int, m *types.GittiModel) string {
 			keys = i18n.LANGUAGEMAPPING.KeyBindingForGitRebaseBranchInputPopUp
 		case constant.GitRebaseOutputPopUp:
 			keys = i18n.LANGUAGEMAPPING.KeyBindingForGitRebaseOutputPopUp
+		case constant.ChooseRemoteBranchOptionPopUp:
+			keys = i18n.LANGUAGEMAPPING.KeyBindingForChooseRemoteBranchOptionPopUp
 		case constant.ChooseBranchOptionForMergePopUp:
 			keys = i18n.LANGUAGEMAPPING.KeyBindingForChooseBranchOptionForMergePopUp
 		case constant.BranchMergeOutputPopUp:
@@ -609,9 +611,12 @@ func renderKeyBindingComponentPanel(width int, m *types.GittiModel) string {
 			}
 		case constant.LogComponentPanel:
 			keys = i18n.LANGUAGEMAPPING.KeyBindingLogComponent
-		case constant.ChooseRemoteBranchOptionPopUp:
-			keys = i18n.LANGUAGEMAPPING.KeyBindingForChooseRemoteBranchOptionPopUp
 		}
+	}
+
+	if pageNavigationAvailable(m) {
+		pageNavigationHelp := fmt.Sprintf("[%s] %s", i18n.LANGUAGEMAPPING.PageNavigationKey, i18n.LANGUAGEMAPPING.PageNavigationDescription)
+		keys = append([]string{pageNavigationHelp}, keys...)
 	}
 
 	var keyBindingLine string
@@ -632,4 +637,49 @@ func renderKeyBindingComponentPanel(width int, m *types.GittiModel) string {
 		Width(width).
 		Height(constant.MainPageKeyBindingLayoutPanelHeight).
 		Render(content)
+}
+
+func pageNavigationAvailable(m *types.GittiModel) bool {
+	if !m.ShowPopUp.Load() {
+		switch m.CurrentSelectedComponent {
+		case constant.LocalBranchOrTagOrRemoteOrWorktreeComponentPanel,
+			constant.ModifiedFilesComponentPanel,
+			constant.CommitLogOrRefLogComponentPanel,
+			constant.StashComponentPanel,
+			constant.DetailComponentPanel,
+			constant.DetailComponentPanelTwo:
+			return true
+		}
+		return false
+	}
+
+	switch m.PopUpType {
+	case constant.ChooseRemotePopUp,
+		constant.ChoosePushTypePopUp,
+		constant.ChooseNewBranchTypePopUp,
+		constant.ChooseSwitchBranchTypePopUp,
+		constant.ChooseGitPullTypePopUp,
+		constant.GitDiscardTypeOptionPopUp,
+		constant.GitResolveConflictOptionPopUp,
+		constant.GitResetLatestCommitTypeOptionPopUp,
+		constant.GitResetToSelectedCommitTypeOptionPopUp,
+		constant.GitCherryPickOptionSelectionPopUp,
+		constant.GitCherryPickPopUp,
+		constant.GitEditCherryPickPopUp,
+		constant.ChooseDeleteTagOptionPopUp,
+		constant.ChooseRemoteForDeleteRemoteTagPopUp,
+		constant.ChoosePushTagOptionPopUp,
+		constant.ChooseFetchTagOptionPopUp,
+		constant.GitRevertParentOptionSelectionPopUp,
+		constant.ChooseRemoteBranchOptionPopUp,
+		constant.ChooseBranchOptionForMergePopUp,
+		constant.BlamePopUp,
+		constant.InteractiveRebaseOptionPopUp,
+		constant.InteractiveRebaseFixupSquashSelectionPopUp,
+		constant.InteractiveRebaseRewordSelectionPopUp,
+		constant.InteractiveRebaseDropSelectionPopUp,
+		constant.KeybindingAndFeatureInstructionsPopUp:
+		return true
+	}
+	return false
 }

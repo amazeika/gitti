@@ -113,6 +113,8 @@ var jA = LanguageMapping{
 	StagedTitle:                         "ステージされた変更",
 	UnstagedTitle:                       "ステージされていない変更",
 	LineEditingModeTitle:                "行編集モード",
+	PageNavigationKey:                   "PgUp/PgDn",
+	PageNavigationDescription:           "表示中の1ページ分を上下に移動",
 	CherryPickTitle:                     "ブランチからチェリーピック: \n %s",
 	EditCherryPickTitle:                 "チェリーピックを編集",
 	ApplyCherryPickTitle:                "現在のブランチにチェリーピックを適用: \n %s",
