@@ -113,6 +113,8 @@ var eN = LanguageMapping{
 	StagedTitle:                         "Staged Changes",
 	UnstagedTitle:                       "Unstaged Changes",
 	LineEditingModeTitle:                "In Line Editing Mode",
+	PageNavigationKey:                   "PgUp/PgDn",
+	PageNavigationDescription:           "move one visible page up or down",
 	CherryPickTitle:                     "Cherry Pick from Branch: \n %s",
 	EditCherryPickTitle:                 "Edit Cherry Pick",
 	ApplyCherryPickTitle:                "Apply Cherry Pick to Current Branch: \n %s",

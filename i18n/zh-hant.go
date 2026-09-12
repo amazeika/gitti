@@ -113,6 +113,8 @@ var zH_HANT = LanguageMapping{
 	StagedTitle:                         "已暫存的變更",
 	UnstagedTitle:                       "未暫存的變更",
 	LineEditingModeTitle:                "行編輯模式",
+	PageNavigationKey:                   "PgUp/PgDn",
+	PageNavigationDescription:           "向上或向下移動一個可見頁面",
 	CherryPickTitle:                     "從分支揀選: \n %s",
 	EditCherryPickTitle:                 "編輯揀選",
 	ApplyCherryPickTitle:                "將揀選應用到當前分支: \n %s",

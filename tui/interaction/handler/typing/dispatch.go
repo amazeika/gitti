@@ -3,6 +3,7 @@ package typing
 import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/gohyuhan/gitti/tui/constant"
+	"github.com/gohyuhan/gitti/tui/interaction/handler/keyutil"
 	blamePopUp "github.com/gohyuhan/gitti/tui/popup/blame"
 	branchPopUp "github.com/gohyuhan/gitti/tui/popup/branch"
 	commitPopUp "github.com/gohyuhan/gitti/tui/popup/commit"
@@ -60,6 +61,14 @@ func Handle(msg tea.KeyPressMsg, m *types.GittiModel) (*types.GittiModel, tea.Cm
 
 	case "down":
 		m, cmd = handleTypingDownKeyBindingInteraction(m)
+
+	case "pgup", "pgdown":
+		// The blame popup keeps its filter active while its result list is
+		// focused. Other typing popups should continue to receive page keys in
+		// their text input or textarea.
+		if m.PopUpType == constant.BlamePopUp {
+			return keyutil.PageKeyPressMsgUpdateForPopUp(msg, m)
+		}
 
 	case "left":
 		m, cmd = handleTypingLeftKeyBindingInteraction(m)

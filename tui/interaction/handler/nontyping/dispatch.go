@@ -135,6 +135,9 @@ func Handle(msg tea.KeyPressMsg, m *types.GittiModel) (*types.GittiModel, tea.Cm
 	case "down", "j":
 		return handleNonTypingDownjKeyBindingInteraction(msg, m)
 
+	case "pgup", "pgdown":
+		return handleNonTypingPageKeyBindingInteraction(msg, m)
+
 	case "left", "h":
 		return handleNonTypingLefthKeyBindingInteraction(m)
 

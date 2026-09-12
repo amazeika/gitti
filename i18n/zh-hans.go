@@ -113,6 +113,8 @@ var zH_HANS = LanguageMapping{
 	StagedTitle:                         "已暂存的更改",
 	UnstagedTitle:                       "未暂存的更改",
 	LineEditingModeTitle:                "行编辑模式",
+	PageNavigationKey:                   "PgUp/PgDn",
+	PageNavigationDescription:           "向上或向下移动一个可见页面",
 	CherryPickTitle:                     "从分支遴选: \n %s",
 	EditCherryPickTitle:                 "编辑遴选",
 	ApplyCherryPickTitle:                "将遴选应用到当前分支: \n %s",

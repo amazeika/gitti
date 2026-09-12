@@ -1,6 +1,7 @@
 package keyutil
 
 import (
+	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/gohyuhan/gitti/tui/constant"
@@ -649,7 +650,35 @@ func triggerViewportVerticalScrollFromKey(msg tea.KeyPressMsg, vp *viewport.Mode
 		vp.ScrollUp(1)
 	case "down", "j":
 		vp.ScrollDown(1)
+	case "pgup":
+		vp.PageUp()
+	case "pgdown":
+		vp.PageDown()
 	}
+}
+
+// ------------------------------------
+//
+//	Move a list selection by pageSize items and clamp it to the visible list
+//	bounds. A non-positive pageSize uses the widget's current per-page value.
+//
+// ------------------------------------
+func MoveListSelectionByPage(listModel *list.Model, direction int, pageSize int) (int, bool) {
+	itemCount := len(listModel.VisibleItems())
+	if itemCount == 0 {
+		return 0, false
+	}
+	if pageSize < 1 {
+		pageSize = max(1, listModel.Paginator.PerPage)
+	}
+
+	currentIndex := listModel.Index()
+	latestIndex := min(max(currentIndex+direction*pageSize, 0), itemCount-1)
+	if latestIndex == currentIndex {
+		return currentIndex, false
+	}
+	listModel.Select(latestIndex)
+	return latestIndex, true
 }
 
 func triggerViewportVerticalScrollFromMouse(msg tea.MouseMsg, vp *viewport.Model) {

@@ -199,6 +199,16 @@ Launch Gitti in any Git repository:
 gitti
 ```
 
+### Keyboard navigation
+
+| Keys | Action |
+| --- | --- |
+| `↑` / `k`, `↓` / `j` | Move one row in a list or one line in a detail view |
+| `PgUp`, `PgDn` | Move one visible page in the focused list, detail view, or popup list |
+| `Tab`, `Shift+Tab` | Move between panels or popup fields |
+| `1`–`4` | Jump to branches, modified files, commit log, or stash |
+| `?` | Open context-sensitive keybinding help |
+
 ### Configuration
 
 Set your preferred language:

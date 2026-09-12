@@ -140,6 +140,8 @@ type LanguageMapping struct {
 	StagedTitle                 string
 	UnstagedTitle               string
 	LineEditingModeTitle        string
+	PageNavigationKey           string
+	PageNavigationDescription   string
 	CherryPickTitle             string
 	EditCherryPickTitle         string
 	ApplyCherryPickTitle        string
