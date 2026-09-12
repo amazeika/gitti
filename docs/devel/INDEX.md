@@ -4,7 +4,7 @@ Specifications for in-flight and shipped work.
 
 ## In progress
 
-_None._
+- [Lazygit-style screen modes](5-lazygit-style-screen-modes.md) — issue [#5](https://github.com/amazeika/gitti/issues/5)
 
 ## Draft
 
