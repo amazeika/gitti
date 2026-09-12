@@ -21,7 +21,7 @@ func handleNonTyping4KeyBindingInteraction(m *types.GittiModel) (*types.GittiMod
 			m.CurrentSelectedComponent = constant.StashComponentPanel
 			m.CurrentSelectedComponentIndex = 4
 			m.DetailPanelParentComponent = ""
-			layout.LeftPanelDynamicResize(m)
+			layout.TuiWindowSizing(m)
 			services.FetchDetailComponentPanelInfoService(m, true)
 		}
 	}

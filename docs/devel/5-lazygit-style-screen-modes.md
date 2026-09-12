@@ -1,8 +1,8 @@
 ---
-status: ready
+status: in-progress
 issue: 5
 pr: null
-completed: []
+completed: [1]
 ---
 
 # Lazygit-Style Screen Modes — Design Document
@@ -364,19 +364,19 @@ fields.
 **ID:** `1`
 **Goal:** Screen mode is explicit runtime state, and one canonical reflow safely sizes every
 mode after terminal, focus, detail-layout, and worktree changes.
-**Tests:** pending
+**Tests:** `tui/initialize/initialize_test.go`, `tui/layout/utils_test.go`
 **Files:** `tui/constant/constant.go`, `tui/types/types.go`,
 `tui/initialize/initialize.go`, `tui/layout/utils.go`,
 `tui/helper/tui-update-helper.go`, and focus-changing handlers.
 
 **Acceptance criteria:**
 
-- [ ] Add the typed enum and model field.
-- [ ] Default startup to Two-column and preserve mode during worktree reinit.
-- [ ] Make `TuiWindowSizing` mode-aware and offset-preserving.
-- [ ] Replace partial focus-only resize calls with canonical reflow at the enumerated call
+- [x] Add the typed enum and model field.
+- [x] Default startup to Two-column and preserve mode during worktree reinit.
+- [x] Make `TuiWindowSizing` mode-aware and offset-preserving.
+- [x] Replace partial focus-only resize calls with canonical reflow at the enumerated call
       sites.
-- [ ] Enforce the single-column focus invariant.
+- [x] Enforce the single-column focus invariant.
 
 ### Phase 2: Mode-specific rendering
 

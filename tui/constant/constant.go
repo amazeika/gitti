@@ -1,5 +1,13 @@
 package constant
 
+type ScreenMode uint8
+
+const (
+	ScreenModeTwoColumn ScreenMode = iota
+	ScreenModeSingleColumn
+	ScreenModeFocused
+)
+
 // -----------------------------------------------------------------------------
 //
 //	Pop Up Type

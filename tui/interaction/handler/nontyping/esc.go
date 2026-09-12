@@ -3,6 +3,7 @@ package nontyping
 import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/gohyuhan/gitti/tui/constant"
+	"github.com/gohyuhan/gitti/tui/layout"
 	branchPopUp "github.com/gohyuhan/gitti/tui/popup/branch"
 	stashPopUp "github.com/gohyuhan/gitti/tui/popup/stash"
 	"github.com/gohyuhan/gitti/tui/services"
@@ -149,6 +150,7 @@ func handleNonTypingEscKeyBindingInteraction(m *types.GittiModel) (*types.GittiM
 			} else {
 				m.CurrentSelectedComponent = m.DetailPanelParentComponent
 				m.DetailPanelParentComponent = ""
+				layout.TuiWindowSizing(m)
 			}
 		}
 	}

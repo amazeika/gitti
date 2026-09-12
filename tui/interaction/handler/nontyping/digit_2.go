@@ -22,7 +22,7 @@ func handleNonTyping2KeyBindingInteraction(m *types.GittiModel) (*types.GittiMod
 			m.CurrentSelectedComponent = constant.ModifiedFilesComponentPanel
 			m.CurrentSelectedComponentIndex = 2
 			m.DetailPanelParentComponent = ""
-			layout.LeftPanelDynamicResize(m)
+			layout.TuiWindowSizing(m)
 			services.FetchDetailComponentPanelInfoService(m, true)
 		}
 	}

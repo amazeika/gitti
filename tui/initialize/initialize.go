@@ -69,6 +69,7 @@ func InitGittiModel(tuiUpdateChannel chan interface{}, repoPath string, repoName
 		UserSetEditor:                 settings.GITTICONFIGSETTINGS.Editor,
 		CurrentSelectedComponent:      constant.ModifiedFilesComponentPanel,
 		CurrentSelectedComponentIndex: 2,
+		ScreenMode:                    constant.ScreenModeTwoColumn,
 		CurrentLocalBranchOrTagOrRemoteOrWorktreeComponentShowing: constant.SHOW_LOCAL_BRANCH,
 		CurrentCommitLogOrRefLogComponentShowing:                  constant.SHOW_COMMITLOG,
 		TotalComponentCount:                                       4,
@@ -139,7 +140,7 @@ func InitGittiModel(tuiUpdateChannel chan interface{}, repoPath string, repoName
 //	through its pointer (the model holds atomic fields, so it cannot be replaced by
 //	a struct copy) so the running bubbletea program keeps the same reference. Every
 //	field is reset to its startup default to avoid cross-worktree state leaking,
-//	EXCEPT Width/Height which are preserved since the terminal size is unchanged.
+//	EXCEPT Width, Height, and ScreenMode, which are preserved runtime properties.
 //
 // ------------------------------------
 func ReinitGittiModel(m *types.GittiModel, repoPath string, repoName string, gitOperations *api.GitOperations) {
@@ -167,8 +168,8 @@ func ReinitGittiModel(m *types.GittiModel, repoPath string, repoName string, git
 	lineEditingIndexCursorVpTwo.SetHorizontalStep(0)
 	lineEditingIndexCursorVpTwo.MouseWheelDelta = 0
 
-	// reinit all state on worktree switch to avoid cross-worktree contamination.
-	// Width/Height are intentionally preserved (terminal size is unchanged).
+	// Reinit all repository-local state on worktree switch. Width, Height, and
+	// ScreenMode are intentionally preserved as process-local runtime state.
 	m.UserSetEditor = settings.GITTICONFIGSETTINGS.Editor
 	m.CurrentSelectedComponent = constant.ModifiedFilesComponentPanel
 	m.CurrentSelectedComponentIndex = 2

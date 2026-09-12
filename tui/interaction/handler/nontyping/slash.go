@@ -3,6 +3,7 @@ package nontyping
 import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/gohyuhan/gitti/tui/constant"
+	"github.com/gohyuhan/gitti/tui/layout"
 	"github.com/gohyuhan/gitti/tui/services"
 	"github.com/gohyuhan/gitti/tui/types"
 )
@@ -19,6 +20,7 @@ func handleNonTypingSlashKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 		if m.CurrentSelectedComponent != constant.LogComponentPanel {
 			m.CurrentSelectedComponent = constant.LogComponentPanel
 			m.DetailPanelParentComponent = ""
+			layout.TuiWindowSizing(m)
 			services.FetchDetailComponentPanelInfoService(m, true)
 		}
 	}

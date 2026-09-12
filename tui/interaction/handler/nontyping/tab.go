@@ -25,7 +25,7 @@ func handleNonTypingTabKeyBindingInteraction(m *types.GittiModel) (*types.GittiM
 			m.CurrentSelectedComponentIndex = nextNavigation
 			m.CurrentSelectedComponent = constant.ComponentPanelNavigationList[nextNavigation]
 			m.DetailPanelParentComponent = ""
-			layout.LeftPanelDynamicResize(m)
+			layout.TuiWindowSizing(m)
 			services.FetchDetailComponentPanelInfoService(m, true)
 		}
 	} else {

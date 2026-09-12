@@ -3,6 +3,7 @@ package nontyping
 import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/gohyuhan/gitti/tui/constant"
+	"github.com/gohyuhan/gitti/tui/layout"
 	interactiverebasePopUp "github.com/gohyuhan/gitti/tui/popup/interactive-rebase"
 	"github.com/gohyuhan/gitti/tui/services"
 	"github.com/gohyuhan/gitti/tui/types"
@@ -35,6 +36,7 @@ func handleNonTypingRightAngleBracketKeyBindingInteraction(m *types.GittiModel) 
 			case constant.SHOW_WORKTREE:
 				// do nothing, as worktree is currently the most right option in the local branch or tag or remote or worktree component panel
 			}
+			layout.TuiWindowSizing(m)
 		case constant.CommitLogOrRefLogComponentPanel:
 			switch m.CurrentCommitLogOrRefLogComponentShowing {
 			case constant.SHOW_COMMITLOG:
@@ -43,6 +45,7 @@ func handleNonTypingRightAngleBracketKeyBindingInteraction(m *types.GittiModel) 
 			case constant.SHOW_REFLOG:
 				// do nothing, as reflog is currently the most right option in the commit log or reflog component panel
 			}
+			layout.TuiWindowSizing(m)
 		}
 	} else {
 		switch m.PopUpType {

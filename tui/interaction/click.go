@@ -51,7 +51,7 @@ func handleLeftMouseClick(msg tea.MouseClickMsg, m *types.GittiModel) (*types.Gi
 					m.CurrentSelectedComponent = panel.component
 					m.CurrentSelectedComponentIndex = panel.index
 					m.DetailPanelParentComponent = ""
-					layout.LeftPanelDynamicResize(m)
+					layout.TuiWindowSizing(m)
 					services.FetchDetailComponentPanelInfoService(m, true)
 				} else if selectionChanged {
 					services.FetchDetailComponentPanelInfoService(m, true)
@@ -68,6 +68,7 @@ func handleLeftMouseClick(msg tea.MouseClickMsg, m *types.GittiModel) (*types.Gi
 		if m.CurrentSelectedComponent != constant.LogComponentPanel {
 			m.CurrentSelectedComponent = constant.LogComponentPanel
 			m.DetailPanelParentComponent = ""
+			layout.TuiWindowSizing(m)
 			services.FetchDetailComponentPanelInfoService(m, true)
 		}
 	} else {
@@ -81,6 +82,7 @@ func handleLeftMouseClick(msg tea.MouseClickMsg, m *types.GittiModel) (*types.Gi
 			constant.LogComponentPanel:
 			m.DetailPanelParentComponent = m.CurrentSelectedComponent
 			m.CurrentSelectedComponent = constant.DetailComponentPanel
+			layout.TuiWindowSizing(m)
 		}
 	}
 	return m, nil
