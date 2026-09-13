@@ -2,7 +2,7 @@
 status: in-progress
 issue: 5
 pr: null
-completed: [1]
+completed: [1, 2]
 ---
 
 # Lazygit-Style Screen Modes — Design Document
@@ -383,17 +383,17 @@ mode after terminal, focus, detail-layout, and worktree changes.
 **ID:** `2`
 **Goal:** The main page assembles the documented Two-column, Single-column, and Focused views
 without changing shared footer, warning, or popup behavior.
-**Tests:** pending
+**Tests:** `tui/layout/view_test.go`, `tui/layout/utils_test.go`
 **Files:** `tui/layout/view.go`, `tui/layout/render.go`.
 
 **Acceptance criteria:**
 
-- [ ] Extract reusable primary-stack and right-stack composition.
-- [ ] Add Single-column and Focused assembly.
-- [ ] Generalize Git-status dimensions.
-- [ ] Render one selected detail subpanel in Focused mode while preserving dual-detail
+- [x] Extract reusable primary-stack and right-stack composition.
+- [x] Add Single-column and Focused assembly.
+- [x] Generalize Git-status dimensions.
+- [x] Render one selected detail subpanel in Focused mode while preserving dual-detail
       state.
-- [ ] Keep footer, minimum-size warning, and popup composition shared.
+- [x] Keep footer, minimum-size warning, and popup composition shared.
 
 ### Phase 3: Keyboard and mouse interaction
 

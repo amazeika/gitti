@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/viewport"
 	"github.com/gohyuhan/gitti/executor"
 	"github.com/gohyuhan/gitti/i18n"
@@ -36,7 +37,29 @@ func initScreenModeLayoutModel(t *testing.T, width int, height int) *types.Gitti
 	model.Width = width
 	model.Height = height
 	model.WindowLeftPanelRatio = 0.3
+	configureScreenModeTestLists(model)
 	return model
+}
+
+func configureScreenModeTestLists(m *types.GittiModel) {
+	lists := []*list.Model{
+		&m.CurrentRepoBranchesInfoList,
+		&m.CurrentRepoTagInfoList,
+		&m.CurrentRepoModifiedFilesInfoList,
+		&m.CurrentRepoCommitLogInfoList,
+		&m.CurrentRepoRefLogInfoList,
+		&m.CurrentRepoStashInfoList,
+		&m.CurrentRepoRemoteInfoList,
+		&m.CurrentRepoWorktreeInfoList,
+	}
+	for _, componentList := range lists {
+		componentList.SetShowPagination(false)
+		componentList.SetShowStatusBar(false)
+		componentList.SetFilteringEnabled(false)
+		componentList.SetShowFilter(false)
+		componentList.SetShowHelp(true)
+		componentList.KeyMap = list.KeyMap{}
+	}
 }
 
 func TestTuiWindowSizingUsesModeSpecificWidths(t *testing.T) {

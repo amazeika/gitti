@@ -65,23 +65,8 @@ func GittiMainPageView(m *types.GittiModel) string {
 		return centered
 	}
 
-	// --- Components ---
-	GitStatusPanel := renderGitStatusComponentPanel(m)
-	localBranchesOrTagOrRemotePanel := renderLocalBranchesOrTagOrRemoteOrWorktreeComponentPanel(m.WindowLeftPanelWidth, m.LocalBranchesComponentPanelHeight, m)
-	modifiedFilesPanel := renderModifiedFilesComponentPanel(m.WindowLeftPanelWidth, m.ModifiedFilesComponentPanelHeight, m)
-	commitLogOrRefLogPanel := renderCommitLogOrRefLogComponentPanel(m.WindowLeftPanelWidth, m.CommitLogComponentPanelHeight, m)
-	stashFilesPanel := renderStashComponentPanel(m.WindowLeftPanelWidth, m.StashComponentPanelHeight, m)
-	detailPanel := renderDetailComponentPanel(m.DetailComponentPanelWidth, m.DetailComponentPanelHeight, m)
-	logPanel := renderLogComponentPanel(m.DetailComponentPanelWidth, m.LogComponentPanelHeight, m)
+	content := renderModeContent(m)
 	bottomBar := renderKeyBindingComponentPanel(m.Width, m)
-
-	leftPanel := lipgloss.JoinVertical(lipgloss.Left, GitStatusPanel, localBranchesOrTagOrRemotePanel, modifiedFilesPanel, commitLogOrRefLogPanel, stashFilesPanel)
-	rightPanel := lipgloss.JoinVertical(lipgloss.Left, detailPanel, logPanel)
-
-	// Combine panels horizontally with explicit top alignment
-	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
-
-	// Stack vertically with explicit left alignment
 	mainView := lipgloss.JoinVertical(lipgloss.Left, content, bottomBar)
 
 	if m.ShowPopUp.Load() {
@@ -105,4 +90,57 @@ func GittiMainPageView(m *types.GittiModel) string {
 	}
 
 	return mainView
+}
+
+func renderModeContent(m *types.GittiModel) string {
+	switch m.ScreenMode {
+	case constant.ScreenModeSingleColumn:
+		return renderPrimaryComponentStack(m.Width, m)
+	case constant.ScreenModeFocused:
+		return renderFocusedComponentPanel(m)
+	default:
+		leftPanel := renderPrimaryComponentStack(m.WindowLeftPanelWidth, m)
+		rightPanel := renderRightComponentStack(m.DetailComponentPanelWidth, m)
+		return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+	}
+}
+
+func renderPrimaryComponentStack(width int, m *types.GittiModel) string {
+	gitStatusPanel := renderGitStatusComponentPanel(width, 1, m)
+	localBranchesOrTagOrRemotePanel := renderLocalBranchesOrTagOrRemoteOrWorktreeComponentPanel(width, m.LocalBranchesComponentPanelHeight, m)
+	modifiedFilesPanel := renderModifiedFilesComponentPanel(width, m.ModifiedFilesComponentPanelHeight, m)
+	commitLogOrRefLogPanel := renderCommitLogOrRefLogComponentPanel(width, m.CommitLogComponentPanelHeight, m)
+	stashFilesPanel := renderStashComponentPanel(width, m.StashComponentPanelHeight, m)
+	return lipgloss.JoinVertical(lipgloss.Left, gitStatusPanel, localBranchesOrTagOrRemotePanel, modifiedFilesPanel, commitLogOrRefLogPanel, stashFilesPanel)
+}
+
+func renderRightComponentStack(width int, m *types.GittiModel) string {
+	detailPanel := renderDetailComponentPanel(width, m.DetailComponentPanelHeight, m)
+	logPanel := renderLogComponentPanel(width, m.LogComponentPanelHeight, m)
+	return lipgloss.JoinVertical(lipgloss.Left, detailPanel, logPanel)
+}
+
+func renderFocusedComponentPanel(m *types.GittiModel) string {
+	width := m.Width
+	height := m.WindowCoreContentHeight
+	switch m.CurrentSelectedComponent {
+	case constant.GitStatusComponentPanel:
+		// Unlike list and viewport views, Git status has only one content line, so
+		// its minimum height must include the border to fill the main area.
+		return renderGitStatusComponentPanel(width, height+2, m)
+	case constant.LocalBranchOrTagOrRemoteOrWorktreeComponentPanel:
+		return renderLocalBranchesOrTagOrRemoteOrWorktreeComponentPanel(width, height, m)
+	case constant.ModifiedFilesComponentPanel:
+		return renderModifiedFilesComponentPanel(width, height, m)
+	case constant.CommitLogOrRefLogComponentPanel:
+		return renderCommitLogOrRefLogComponentPanel(width, height, m)
+	case constant.StashComponentPanel:
+		return renderStashComponentPanel(width, height, m)
+	case constant.DetailComponentPanel, constant.DetailComponentPanelTwo:
+		return renderFocusedDetailComponentPanel(width, height, m)
+	case constant.LogComponentPanel:
+		return renderLogComponentPanel(width, height, m)
+	default:
+		return ""
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	gitticonst "github.com/gohyuhan/gitti/constant"
 	"github.com/gohyuhan/gitti/i18n"
 	branchComponent "github.com/gohyuhan/gitti/tui/component/branch"
@@ -27,7 +28,7 @@ import (
 //	instead.
 //
 // ------------------------------------
-func renderGitStatusComponentPanel(m *types.GittiModel) string {
+func renderGitStatusComponentPanel(width int, height int, m *types.GittiModel) string {
 	borderStyle := style.PanelBorderStyle
 	if m.CurrentSelectedComponent == constant.GitStatusComponentPanel {
 		borderStyle = style.SelectedBorderStyle
@@ -55,20 +56,20 @@ func renderGitStatusComponentPanel(m *types.GittiModel) string {
 		repoTrackBranchName := fmt.Sprintf(" %s -> %s %s", m.RepoName, m.TrackedUpstreamOrBranchIcon, trackedUpStreamOrBranchName)
 
 		// the max width is the window width - padding - the length of RemoteSyncStateLineString
-		repoTrackBranchName = utils.TruncateString(repoTrackBranchName, m.WindowLeftPanelWidth-constant.ListItemOrTitleWidthPad-additionalWidth)
+		repoTrackBranchName = utils.TruncateString(repoTrackBranchName, width-constant.ListItemOrTitleWidthPad-additionalWidth)
 
 		return borderStyle.
-			Width(m.WindowLeftPanelWidth).
-			Height(1).
+			Width(width).
+			Height(height).
 			Render(fmt.Sprintf("%s%s", remoteSyncStateLineString, repoTrackBranchName))
 	} else {
 		var gitStateInProgress string
 
-		gitStateInProgress = utils.TruncateString(fmt.Sprintf(i18n.LANGUAGEMAPPING.GitCertainStateStillInProgress, m.CurrentGitRepoStatus), m.WindowLeftPanelWidth-constant.ListItemOrTitleWidthPad-2)
+		gitStateInProgress = utils.TruncateString(fmt.Sprintf(i18n.LANGUAGEMAPPING.GitCertainStateStillInProgress, m.CurrentGitRepoStatus), width-constant.ListItemOrTitleWidthPad-2)
 
 		return borderStyle.
-			Width(m.WindowLeftPanelWidth).
-			Height(1).
+			Width(width).
+			Height(height).
 			Render(fmt.Sprintf("%s %s", lipgloss.NewStyle().Foreground(style.ColorError).Render("!"), gitStateInProgress))
 	}
 }
@@ -95,10 +96,7 @@ func renderLocalBranchesOrTagOrRemoteOrWorktreeComponentPanel(width int, height 
 	case constant.SHOW_WORKTREE:
 		content = m.CurrentRepoWorktreeInfoList.View()
 	}
-	return borderStyle.
-		Width(width).
-		Height(height).
-		Render(content)
+	return renderBorderedPanel(borderStyle, width, height, content)
 }
 
 // ------------------------------------
@@ -112,10 +110,7 @@ func renderModifiedFilesComponentPanel(width int, height int, m *types.GittiMode
 	if m.CurrentSelectedComponent == constant.ModifiedFilesComponentPanel {
 		borderStyle = style.SelectedBorderStyle
 	}
-	return borderStyle.
-		Width(width).
-		Height(height).
-		Render(m.CurrentRepoModifiedFilesInfoList.View())
+	return renderBorderedPanel(borderStyle, width, height, m.CurrentRepoModifiedFilesInfoList.View())
 }
 
 // ------------------------------------
@@ -138,10 +133,7 @@ func renderCommitLogOrRefLogComponentPanel(width int, height int, m *types.Gitti
 		content = m.CurrentRepoRefLogInfoList.View()
 	}
 
-	return borderStyle.
-		Width(width).
-		Height(height).
-		Render(content)
+	return renderBorderedPanel(borderStyle, width, height, content)
 }
 
 // ------------------------------------
@@ -281,15 +273,42 @@ func renderDetailComponentPanel(width int, height int, m *types.GittiModel) stri
 //	Render the stash panel showing the list of git stash entries.
 //
 // ------------------------------------
+func renderFocusedDetailComponentPanel(width int, height int, m *types.GittiModel) string {
+	borderStyle := style.SelectedBorderStyle
+	selectedViewport := &m.DetailPanelViewport
+	selectedCursorViewport := &m.LineEditingIndexCursorViewport
+	if m.CurrentSelectedComponent == constant.DetailComponentPanelTwo {
+		selectedViewport = &m.DetailPanelTwoViewport
+		selectedCursorViewport = &m.LineEditingIndexCursorTwoViewport
+	}
+
+	panelHeight := height
+	content := selectedViewport.View()
+	if m.IsLineEditingState.Load() {
+		panelHeight -= 3
+		content = lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			style.NewStyle.Width(3).Height(panelHeight).Render(selectedCursorViewport.View()),
+			selectedViewport.View(),
+		)
+	}
+
+	content = borderStyle.Width(width).Height(panelHeight).Render(content)
+	if m.IsLineEditingState.Load() {
+		lineEditingTitle := style.PanelBorderStyle.Width(width).Render(
+			utils.TruncateString(i18n.LANGUAGEMAPPING.LineEditingModeTitle, width-4),
+		)
+		content = lipgloss.JoinVertical(lipgloss.Top, lineEditingTitle, content)
+	}
+	return content
+}
+
 func renderStashComponentPanel(width int, height int, m *types.GittiModel) string {
 	borderStyle := style.PanelBorderStyle
 	if m.CurrentSelectedComponent == constant.StashComponentPanel {
 		borderStyle = style.SelectedBorderStyle
 	}
-	return borderStyle.
-		Width(width).
-		Height(height).
-		Render(m.CurrentRepoStashInfoList.View())
+	return renderBorderedPanel(borderStyle, width, height, m.CurrentRepoStashInfoList.View())
 }
 
 // ------------------------------------
@@ -303,10 +322,19 @@ func renderLogComponentPanel(width int, height int, m *types.GittiModel) string 
 	if m.CurrentSelectedComponent == constant.LogComponentPanel {
 		borderStyle = style.SelectedBorderStyle
 	}
-	return borderStyle.
-		Width(width).
-		Height(height).
-		Render(m.CurrentLogComponentViewport.View())
+	return renderBorderedPanel(borderStyle, width, height, m.CurrentLogComponentViewport.View())
+}
+
+func renderBorderedPanel(borderStyle lipgloss.Style, width int, height int, content string) string {
+	lines := strings.Split(content, "\n")
+	contentWidth := max(0, width-2)
+	for index := range lines {
+		lines[index] = ansi.Truncate(lines[index], contentWidth, "…")
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	return borderStyle.Width(width).Height(height).Render(strings.Join(lines, "\n"))
 }
 
 // ------------------------------------
