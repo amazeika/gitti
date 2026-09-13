@@ -2,7 +2,7 @@
 status: in-progress
 issue: 5
 pr: null
-completed: [1, 2, 3, 4, 5, 6]
+completed: [1, 2, 3, 4, 5, 6, 7]
 ---
 
 # Lazygit-Style Screen Modes — Design Document
@@ -540,6 +540,44 @@ go vet ./...
 - Popups remain overlays, block mode changes, and close back to the same mode.
 - Mode survives worktree switching but is not persisted across process restarts.
 - All automated tests, `go vet ./...`, and gofmt cleanliness pass.
+
+## 10. Test instructions
+
+Run the automated coverage and repository checks from the repository root:
+
+```bash
+go test -count=1 ./...  # 277 tests across 11 packages
+go vet ./...
+go build -o ./bin/gitti .
+```
+
+| Phase | Automated tests |
+| --- | --- |
+| 1 — state and canonical reflow | `tui/initialize/initialize_test.go`, `tui/layout/utils_test.go` |
+| 2 — mode-specific rendering | `tui/layout/view_test.go`, `tui/layout/utils_test.go` |
+| 3 — keyboard and mouse interaction | `tui/interaction/handler/nontyping/screen_mode_test.go`, `tui/interaction/keybinding_test.go`, `tui/interaction/click_test.go`, `tui/interaction/mouse_test.go` |
+| 4 — discoverability and regression coverage | `i18n/i18n_test.go`, `tui/layout/view_test.go` |
+
+Manual validation should be repeated at 80x24 and at a wider terminal size:
+
+1. **Cycle primary panels.** Select each primary panel with `Tab`, `Shift+Tab`, or `1`–`4`, then
+   press `=` and `_`. Confirm the layouts cycle in both directions through two-column,
+   single-column, and focused without changing the selected panel.
+2. **Navigate extended panels.** From single-column, open a modified-file, commit, and stash
+   detail and press `/` for the application log. Each opens focused; `Escape` returns a focused
+   detail to its parent. With a detail or log selected, mode cycling skips single-column.
+3. **Preserve detail state.** Open a staged/unstaged two-part diff, scroll it horizontally and
+   vertically, and use `[` and `]` before and during line editing. Cycle modes and resize the
+   terminal; the selected subpanel, cursor, and valid offsets remain in place.
+4. **Check overlays and controls.** In every mode, open and close one typing popup and one
+   non-typing popup. The underlying layout remains unchanged, popup-specific help replaces the
+   mode hint, and `=` and `_` do not change the mode while a popup is open.
+5. **Check pointer routing.** Click panel titles, rows, borders, and the bottom keybinding bar,
+   then use vertical and horizontal wheel input. Only visible panels receive focus, selection,
+   or scrolling, and the bottom bar is inert.
+6. **Check runtime scope.** Adjust the two-column ratio with `+` or `-`, visit the other modes,
+   and return to confirm the ratio is retained. Switch worktrees in each mode and confirm the
+   mode survives, then restart Gitti and confirm it starts in two-column mode.
 
 ## Outcome
 

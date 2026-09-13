@@ -63,6 +63,7 @@ Gitti is built for terminal-focused developers who need visual Git operations wi
 - ⚡ **Real-time Updates** - File system monitoring for instant status updates
 - ⌨️ **Keyboard-driven** - Efficient navigation without touching the mouse
 - 🖱️ **Mouse Support** - Optional click to focus a panel or select a list item
+- 🖥️ **Flexible Screen Modes** - Cycle between two-column, full-width single-column, and focused-panel layouts
 
 ## Installation
 
@@ -207,7 +208,20 @@ gitti
 | `PgUp`, `PgDn` | Move one visible page in the focused list, detail view, or popup list |
 | `Tab`, `Shift+Tab` | Move between panels or popup fields |
 | `1`–`4` | Jump to branches, modified files, commit log, or stash |
+| `=` / `_` | Cycle forward or backward through screen modes |
 | `?` | Open context-sensitive keybinding help |
+
+### Screen modes
+
+Gitti starts in the standard two-column layout. Press `=` or `_` to cycle between:
+
+- **Two-column** — primary panels on the left and detail and log panels on the right.
+- **Single-column** — the primary panel stack uses the full terminal width.
+- **Focused** — the selected panel uses all space above the keybinding bar.
+
+Single-column is skipped while a detail or log panel is selected so the active panel never becomes
+hidden. Screen mode lasts for the current process, including worktree switches, but is reset when
+Gitti restarts. Popups retain the current layout and temporarily block mode changes.
 
 ### Configuration
 
