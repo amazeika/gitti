@@ -4,7 +4,7 @@ Specifications for in-flight and shipped work.
 
 ## In progress
 
-_No in-progress specifications._
+- [Reliable Push Result and State Refresh](7-reliable-push-result-and-state-refresh.md) — issue [#7](https://github.com/amazeika/gitti/issues/7)
 
 ## Draft
 
