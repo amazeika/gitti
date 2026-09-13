@@ -457,13 +457,7 @@ func (gb *GitBranch) GitMerge(ctx context.Context, branchesName []string) ([]str
 		return []string{gb.gitProcessLock.OtherProcessRunningWarning()}, false
 	}
 	defer gb.gitProcessLock.ReleaseGitOpsLock()
-	var gitArgs []string
-	if gb.FfMerge {
-		gitArgs = []string{"merge", "--ff"}
-	} else {
-		gitArgs = []string{"merge", "--no-ff"}
-	}
-	gitArgs = append(gitArgs, branchesName...)
+	gitArgs := buildMergeArgs(gb.FfMerge, branchesName)
 
 	mergeExecutor := executor.GittiCmdExecutor.RunGitCmdWithContext(ctx, gitArgs, false)
 	gb.logging.RegisterNewLog(logging.MERGE_BRANCH_OPS, strings.Join(gitArgs, " "), logging.INFO, "", true)
@@ -486,13 +480,16 @@ func (gb *GitBranch) GitMerge(ctx context.Context, branchesName []string) ([]str
 //
 // ------------------------------------
 func (gb *GitBranch) GitMergeWithSigning(branchesName []string) []string {
-	var gitArgs []string
-	if gb.FfMerge {
-		gitArgs = []string{"merge", "--ff"}
-	} else {
-		gitArgs = []string{"merge", "--no-ff"}
-	}
-	gitArgs = append(gitArgs, branchesName...)
+	return buildMergeArgs(gb.FfMerge, branchesName)
+}
 
-	return gitArgs
+// buildMergeArgs keeps merge operands behind Git's option terminator. Branch
+// names are canonical local-ref names and are deliberately passed unchanged.
+func buildMergeArgs(ffMerge bool, branchesName []string) []string {
+	strategy := "--no-ff"
+	if ffMerge {
+		strategy = "--ff"
+	}
+	gitArgs := []string{"merge", strategy, "--"}
+	return append(gitArgs, branchesName...)
 }

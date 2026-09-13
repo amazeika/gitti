@@ -309,7 +309,10 @@ func InitChooseBranchOptionForMergePopUpModel(m *types.GittiModel) {
 		if branch.IsCheckedOut {
 			continue
 		}
-		items = append(items, GitMergeBranchOptionItem{BranchName: branch.BranchName})
+		items = append(items, GitMergeBranchOptionItem{
+			BranchName:                   branch.BranchName,
+			IsCheckedOutInLinkedWorktree: branch.IsCheckedOutInLinkedWorktree,
+		})
 	}
 	width := (min(constant.MaxChooseBranchOptionForMergePopUpWidth, int(float64(m.Width)*0.8)) - 4)
 

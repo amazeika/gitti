@@ -2,7 +2,7 @@
 status: in-progress
 issue: 6
 pr: null
-completed: [1]
+completed: [1, 2]
 ---
 
 # Canonical Local Branches and Linked-Worktree Status — Design Document
@@ -209,7 +209,7 @@ Rollback is a code revert with no data cleanup. The change performs no worktree 
 
 **ID:** `2`
 **Goal:** the merge chooser keeps linked occupancy visible while both background and signing merges receive unchanged canonical refs behind an option terminator
-**Tests:** pending
+**Tests:** `api/git/merge_test.go`, `tui/popup/branch/merge_test.go`
 
 **Acceptance criteria:**
 
