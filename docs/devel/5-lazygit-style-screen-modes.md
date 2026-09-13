@@ -2,7 +2,7 @@
 status: in-progress
 issue: 5
 pr: null
-completed: [1, 2, 3, 4]
+completed: [1, 2, 3, 4, 5]
 ---
 
 # Lazygit-Style Screen Modes — Design Document
