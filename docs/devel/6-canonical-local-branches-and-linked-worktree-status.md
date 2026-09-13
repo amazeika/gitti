@@ -2,7 +2,7 @@
 status: in-progress
 issue: 6
 pr: null
-completed: [1, 2, 3]
+completed: [1, 2, 3, 4]
 ---
 
 # Canonical Local Branches and Linked-Worktree Status — Design Document
@@ -296,4 +296,6 @@ No unresolved design questions remain. Richer detached-HEAD presentation, click-
 
 ## Outcome
 
-<!-- Build fills this after implementation, including the full-sweep result. Keep it brief. -->
+Implemented as designed: local branch discovery now publishes canonical `refs/heads/`-relative names in atomic snapshots for attached, unborn/orphan, detached, and failed-refresh states; commit-log discovery remains independent. The branch panel and merge chooser render `*` and `+` from status metadata while filtering and actions retain undecorated identity, and both merge paths place canonical operands after a shared `--` boundary. Current checkout wins over linked occupancy, detached HEAD has no synthetic row, and chooser rebuilds retain discovery order.
+
+There were no design deviations, deferred items, or advisory coverage gaps. Both implementation preflights passed with clean lint and all gates green after correcting unborn symbolic-HEAD canonicalization and isolating merge integration tests from user Git configuration. The full sweep, `go test ./...`, passed.
