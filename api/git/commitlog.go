@@ -159,12 +159,15 @@ func (gCL *GitCommitLog) GetCommitLogs() {
 //
 // ------------------------------------
 func getLocalBranchNames() ([]string, error) {
-	gitArgs := []string{"for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/"}
-	output, err := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false).Output()
+	localRefs, err := discoverLocalRefs()
 	if err != nil {
 		return nil, err
 	}
-	return processGeneralGitOpsOutputIntoStringArray(output), nil
+	branchNames := make([]string, 0, len(localRefs))
+	for _, localRef := range localRefs {
+		branchNames = append(branchNames, localRef.name)
+	}
+	return branchNames, nil
 }
 
 // ------------------------------------

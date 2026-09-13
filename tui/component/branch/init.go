@@ -16,9 +16,12 @@ import (
 //
 // ------------------------------------
 func InitBranchList(m *types.GittiModel) {
-	currentCheckOut := m.GitOperations.GitBranch.CurrentCheckOut()
-	latestBranchArray := []list.Item{
-		GitBranchItem(currentCheckOut),
+	localSnapshot := m.GitOperations.GitBranch.LocalBranchSnapshot()
+	currentCheckOut := localSnapshot.CurrentCheckOut
+	allBranches := localSnapshot.AllBranches
+	latestBranchArray := make([]list.Item, 0, len(allBranches)+1)
+	if currentCheckOut.BranchName != "" {
+		latestBranchArray = append(latestBranchArray, GitBranchItem(currentCheckOut))
 	}
 
 	m.CheckOutBranch = currentCheckOut.BranchName
@@ -30,11 +33,13 @@ func InitBranchList(m *types.GittiModel) {
 
 	if previousSelectedBranch != nil {
 		previousSelectedBranchInfo := previousSelectedBranch.(GitBranchItem)
-		for index, branch := range m.GitOperations.GitBranch.AllBranches() {
-			// we use branch name here to determine if it was the same branch as the branch name is unique
-			// we need to +1 to the index as there will always be 1 item already in the list which is the checkout branch
+		for index, branch := range allBranches {
+			// We use branch name here because it is the canonical branch identity.
 			if branch.BranchName == previousSelectedBranchInfo.BranchName {
-				selectedBranchPosition = index + 1
+				selectedBranchPosition = index
+				if currentCheckOut.BranchName != "" {
+					selectedBranchPosition++
+				}
 			}
 			latestBranchArray = append(latestBranchArray, GitBranchItem(branch))
 		}
@@ -44,7 +49,7 @@ func InitBranchList(m *types.GittiModel) {
 			selectedBranchPosition = 0
 		}
 	} else {
-		for _, branch := range m.GitOperations.GitBranch.AllBranches() {
+		for _, branch := range allBranches {
 			latestBranchArray = append(latestBranchArray, GitBranchItem(branch))
 		}
 	}

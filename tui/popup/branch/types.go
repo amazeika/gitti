@@ -305,15 +305,16 @@ type ChooseBranchOptionForMergePopUpModel struct {
 
 // ------------------------------------
 //
-//	GitMergeBranchOptionItemDelegate renders each branch name as a single row in
-//	the merge branch selection lists (available and selected panels).
-//	GitMergeBranchOptionItem wraps a single branch name for use in those lists.
+//	GitMergeBranchOptionItemDelegate renders each canonical branch name and its
+//	display-only linked-worktree status in the merge selection lists.
+//	GitMergeBranchOptionItem keeps the marker separate from branch identity.
 //
 // ------------------------------------
 type (
 	GitMergeBranchOptionItemDelegate struct{}
 	GitMergeBranchOptionItem         struct {
-		BranchName string
+		BranchName                   string
+		IsCheckedOutInLinkedWorktree bool
 	}
 )
 
@@ -330,7 +331,11 @@ func (d GitMergeBranchOptionItemDelegate) Render(w io.Writer, m list.Model, inde
 		return
 	}
 
-	str := fmt.Sprintf("  %s", i.BranchName)
+	marker := " "
+	if i.IsCheckedOutInLinkedWorktree {
+		marker = "+"
+	}
+	str := fmt.Sprintf(" %s %s", marker, i.BranchName)
 
 	componentWidth := m.Width() - constant.ListItemOrTitleWidthPad
 

@@ -15,17 +15,17 @@ import (
 
 // ------------------------------------
 //
-//	GitBranchItem holds the name and checkout status of a branch for display
-//	in the branch list. GitBranchItemDelegate implements list.ItemDelegate,
-//	rendering each row with a "* " prefix for the checked-out branch and
-//	"❯" for the selected row.
+//	GitBranchItem holds a canonical branch name and its display-only checkout
+//	status. GitBranchItemDelegate implements list.ItemDelegate, rendering "*"
+//	for the current worktree and "+" for a linked-worktree checkout.
 //
 // ------------------------------------
 type (
 	GitBranchItemDelegate struct{}
 	GitBranchItem         struct {
-		BranchName   string
-		IsCheckedOut bool
+		BranchName                   string
+		IsCheckedOut                 bool
+		IsCheckedOutInLinkedWorktree bool
 	}
 )
 
@@ -42,10 +42,13 @@ func (d GitBranchItemDelegate) Render(w io.Writer, m list.Model, index int, list
 		return
 	}
 
-	str := fmt.Sprintf("   %s", i.BranchName)
+	marker := " "
 	if i.IsCheckedOut {
-		str = fmt.Sprintf(" * %s", i.BranchName)
+		marker = "*"
+	} else if i.IsCheckedOutInLinkedWorktree {
+		marker = "+"
 	}
+	str := fmt.Sprintf(" %s %s", marker, i.BranchName)
 
 	componentWidth := m.Width() - constant.ListItemOrTitleWidthPad
 

@@ -151,10 +151,14 @@ func UpdateChooseBranchOptionForMergePopUpModel(m *types.GittiModel) {
 			if branch.IsCheckedOut {
 				continue
 			}
+			item := GitMergeBranchOptionItem{
+				BranchName:                   branch.BranchName,
+				IsCheckedOutInLinkedWorktree: branch.IsCheckedOutInLinkedWorktree,
+			}
 			if slices.Contains(tmpSelectedBranchStringList, branch.BranchName) {
-				selectedBranchOptionItems = append(selectedBranchOptionItems, GitMergeBranchOptionItem{BranchName: branch.BranchName})
+				selectedBranchOptionItems = append(selectedBranchOptionItems, item)
 			} else {
-				branchOptionItems = append(branchOptionItems, GitMergeBranchOptionItem{BranchName: branch.BranchName})
+				branchOptionItems = append(branchOptionItems, item)
 			}
 		}
 

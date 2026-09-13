@@ -270,7 +270,10 @@ func InitChooseRemoteBranchOptionPopUpModel(m *types.GittiModel) {
 	remoteBranches := m.GitOperations.GitBranch.RemoteBranches()
 	items := make([]list.Item, 0, len(remoteBranches))
 	for _, remoteBranch := range remoteBranches {
-		items = append(items, RemoteBranchItem(remoteBranch))
+		items = append(items, RemoteBranchItem{
+			BranchName:   remoteBranch.BranchName,
+			IsCheckedOut: remoteBranch.IsCheckedOut,
+		})
 	}
 	width := (min(constant.MaxChooseRemoteBranchOptionPopUpWidth, int(float64(m.Width)*0.8)) - 4)
 	cRBOL := list.New(items, RemoteBranchItemDelegate{}, width, constant.PopUpChooseRemoteBranchOptionHeight)
@@ -306,7 +309,10 @@ func InitChooseBranchOptionForMergePopUpModel(m *types.GittiModel) {
 		if branch.IsCheckedOut {
 			continue
 		}
-		items = append(items, GitMergeBranchOptionItem{BranchName: branch.BranchName})
+		items = append(items, GitMergeBranchOptionItem{
+			BranchName:                   branch.BranchName,
+			IsCheckedOutInLinkedWorktree: branch.IsCheckedOutInLinkedWorktree,
+		})
 	}
 	width := (min(constant.MaxChooseBranchOptionForMergePopUpWidth, int(float64(m.Width)*0.8)) - 4)
 
