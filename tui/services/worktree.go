@@ -9,6 +9,7 @@ import (
 	"github.com/gohyuhan/gitti/logging"
 	"github.com/gohyuhan/gitti/tui/constant"
 	"github.com/gohyuhan/gitti/tui/initialize"
+	"github.com/gohyuhan/gitti/tui/layout"
 	worktreePopUp "github.com/gohyuhan/gitti/tui/popup/worktree"
 	"github.com/gohyuhan/gitti/tui/types"
 )
@@ -148,6 +149,7 @@ func SwitchWorktreeService(m *types.GittiModel, worktreePath string) {
 
 	// reset all model state in place (preserving terminal width/height) for the new worktree
 	initialize.ReinitGittiModel(m, gitRepoPathInfo.TopLevelRepoPath, gitRepoPathInfo.RepoName, gitOperations)
+	layout.TuiWindowSizing(m)
 
 	// rewire the daemon to the freshly rebuilt GitOperations, then trigger one full
 	// fetch so the new worktree's git state repopulates immediately

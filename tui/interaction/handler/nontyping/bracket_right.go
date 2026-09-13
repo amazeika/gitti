@@ -3,6 +3,7 @@ package nontyping
 import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/gohyuhan/gitti/tui/constant"
+	"github.com/gohyuhan/gitti/tui/layout"
 	"github.com/gohyuhan/gitti/tui/types"
 )
 
@@ -18,6 +19,7 @@ func handleNonTypingRightBracketKeyBindingInteraction(m *types.GittiModel) (*typ
 		// handle detail component panel switching
 		if m.CurrentSelectedComponent == constant.DetailComponentPanel && m.ShowDetailPanelTwo.Load() {
 			m.CurrentSelectedComponent = constant.DetailComponentPanelTwo
+			layout.TuiWindowSizing(m)
 		}
 	}
 	return m, nil

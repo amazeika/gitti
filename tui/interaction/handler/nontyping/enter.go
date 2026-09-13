@@ -52,6 +52,8 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 			if len(m.CurrentRepoModifiedFilesInfoList.Items()) > 0 {
 				m.CurrentSelectedComponent = constant.DetailComponentPanel
 				m.DetailPanelParentComponent = constant.ModifiedFilesComponentPanel
+				promoteSuccessfulSingleColumnDrillDown(m)
+				layout.TuiWindowSizing(m)
 			}
 		case constant.CommitLogOrRefLogComponentPanel:
 			switch m.CurrentCommitLogOrRefLogComponentShowing {
@@ -59,17 +61,23 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 				if len(m.CurrentRepoCommitLogInfoList.Items()) > 0 {
 					m.CurrentSelectedComponent = constant.DetailComponentPanel
 					m.DetailPanelParentComponent = constant.CommitLogOrRefLogComponentPanel
+					promoteSuccessfulSingleColumnDrillDown(m)
+					layout.TuiWindowSizing(m)
 				}
 			case constant.SHOW_REFLOG:
 				if len(m.CurrentRepoRefLogInfoList.Items()) > 0 {
 					m.CurrentSelectedComponent = constant.DetailComponentPanel
 					m.DetailPanelParentComponent = constant.CommitLogOrRefLogComponentPanel
+					promoteSuccessfulSingleColumnDrillDown(m)
+					layout.TuiWindowSizing(m)
 				}
 			}
 		case constant.StashComponentPanel:
 			if len(m.CurrentRepoStashInfoList.Items()) > 0 {
 				m.CurrentSelectedComponent = constant.DetailComponentPanel
 				m.DetailPanelParentComponent = constant.StashComponentPanel
+				promoteSuccessfulSingleColumnDrillDown(m)
+				layout.TuiWindowSizing(m)
 			}
 		case constant.LocalBranchOrTagOrRemoteOrWorktreeComponentPanel:
 			switch m.CurrentLocalBranchOrTagOrRemoteOrWorktreeComponentShowing {
@@ -105,7 +113,7 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 						return m, nil
 					}
 					services.SwitchWorktreeService(m, selectedWorktree.WorktreePath)
-					layout.LeftPanelDynamicResize(m)
+					layout.TuiWindowSizing(m)
 					services.FetchDetailComponentPanelInfoService(m, true)
 				}
 
@@ -113,6 +121,7 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 		case constant.LogComponentPanel:
 			m.CurrentSelectedComponent = constant.DetailComponentPanel
 			m.DetailPanelParentComponent = constant.LogComponentPanel
+			layout.TuiWindowSizing(m)
 		}
 	} else {
 		switch m.PopUpType {
@@ -787,4 +796,10 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 		}
 	}
 	return m, nil
+}
+
+func promoteSuccessfulSingleColumnDrillDown(m *types.GittiModel) {
+	if m.ScreenMode == constant.ScreenModeSingleColumn {
+		m.ScreenMode = constant.ScreenModeFocused
+	}
 }

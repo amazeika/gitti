@@ -20,30 +20,84 @@ import (
 
 // ------------------------------------
 //
-//	Recompute and apply all panel widths and heights from the current terminal
-//	dimensions and left-panel ratio. Called on every window-resize event.
+//	Recompute every panel dimension from the current terminal, focus, and screen
+//	mode. This is the canonical reflow operation after any geometry or focus change.
 //
 // ------------------------------------
 func TuiWindowSizing(m *types.GittiModel) {
-	// Compute panel widths
-	m.WindowLeftPanelWidth = int(float64(m.Width) * m.WindowLeftPanelRatio)
-	m.DetailComponentPanelWidth = m.Width - m.WindowLeftPanelWidth
+	if m.ScreenMode == constant.ScreenModeSingleColumn && !isPrimaryComponent(m.CurrentSelectedComponent) {
+		m.ScreenMode = constant.ScreenModeFocused
+	}
+
+	detailPanelXOffset := m.DetailPanelViewport.XOffset()
+	detailPanelYOffset := m.DetailPanelViewport.YOffset()
+	detailPanelTwoXOffset := m.DetailPanelTwoViewport.XOffset()
+	detailPanelTwoYOffset := m.DetailPanelTwoViewport.YOffset()
+	logComponentXOffset := m.CurrentLogComponentViewport.XOffset()
+	logComponentYOffset := m.CurrentLogComponentViewport.YOffset()
 
 	m.WindowCoreContentHeight = m.Height - constant.MainPageKeyBindingLayoutPanelHeight - 2*constant.Padding
 
-	// calculate the log component height based on the ratio of the window core content height
 	logComponentHeight := int(float64(m.WindowCoreContentHeight) * constant.LogComponentHeightRatio)
-	// if the calculated log component height is less than the minimum log component height,
-	// set the log component height to the minimum log component height
-	logComponentHeight = max(logComponentHeight, constant.MinLogComponentHeight)
-	m.LogComponentPanelHeight = logComponentHeight
-	m.DetailComponentPanelHeight = m.WindowCoreContentHeight - 2*constant.Padding - logComponentHeight
+	m.LogComponentPanelHeight = max(logComponentHeight, constant.MinLogComponentHeight)
+	m.DetailComponentPanelHeight = m.WindowCoreContentHeight - 2*constant.Padding - m.LogComponentPanelHeight
 
-	// update the dynamic size of the left panel
-	LeftPanelDynamicResize(m)
+	switch m.ScreenMode {
+	case constant.ScreenModeSingleColumn:
+		m.WindowLeftPanelWidth = m.Width
+		m.DetailComponentPanelWidth = 0
+		LeftPanelDynamicResize(m)
+		rebuildListTitles(m, m.WindowLeftPanelWidth)
+	case constant.ScreenModeFocused:
+		m.WindowLeftPanelWidth = m.Width
+		m.DetailComponentPanelWidth = m.Width
+		LeftPanelDynamicResize(m)
+		rebuildListTitles(m, m.Width)
+		sizeFocusedComponent(m)
+	default:
+		m.WindowLeftPanelWidth = int(float64(m.Width) * m.WindowLeftPanelRatio)
+		m.DetailComponentPanelWidth = m.Width - m.WindowLeftPanelWidth
+		LeftPanelDynamicResize(m)
+		rebuildListTitles(m, m.WindowLeftPanelWidth)
+		UpdateDetailComponentViewportLayout(m)
+		m.CurrentLogComponentViewport.SetWidth(m.DetailComponentPanelWidth - 2)
+		m.CurrentLogComponentViewport.SetHeight(m.LogComponentPanelHeight)
+	}
 
-	// reconstruct the component title
-	titleWidthLimit := m.WindowLeftPanelWidth - constant.ListItemOrTitleWidthPad - 2
+	m.DetailPanelViewport.SetXOffset(detailPanelXOffset)
+	m.DetailPanelViewport.SetYOffset(detailPanelYOffset)
+	m.DetailPanelTwoViewport.SetXOffset(detailPanelTwoXOffset)
+	m.DetailPanelTwoViewport.SetYOffset(detailPanelTwoYOffset)
+	m.CurrentLogComponentViewport.SetXOffset(logComponentXOffset)
+	m.CurrentLogComponentViewport.SetYOffset(logComponentYOffset)
+	m.DetailPanelViewportOffset = m.DetailPanelViewport.XOffset()
+	m.DetailPanelTwoViewportOffset = m.DetailPanelTwoViewport.XOffset()
+
+	if m.IsLineEditingState.Load() {
+		EnterOrReinitLineEditingState(m)
+	}
+}
+
+func isPrimaryComponent(component string) bool {
+	for _, primaryComponent := range constant.ComponentPanelNavigationList {
+		if component == primaryComponent {
+			return true
+		}
+	}
+	return false
+}
+
+func isLogFocusForLeftPanel(m *types.GittiModel) bool {
+	if m.CurrentSelectedComponent == constant.LogComponentPanel {
+		return true
+	}
+	return (m.CurrentSelectedComponent == constant.DetailComponentPanel ||
+		m.CurrentSelectedComponent == constant.DetailComponentPanelTwo) &&
+		m.DetailPanelParentComponent == constant.LogComponentPanel
+}
+
+func rebuildListTitles(m *types.GittiModel, panelWidth int) {
+	titleWidthLimit := max(0, panelWidth-constant.ListItemOrTitleWidthPad-2)
 	m.CurrentRepoBranchesInfoList.Title = ansi.Truncate(branchComponent.ConstructLocalBranchComponentTitle(titleWidthLimit), titleWidthLimit, "...")
 	m.CurrentRepoTagInfoList.Title = ansi.Truncate(tagComponent.ConstructTagComponentTitle(titleWidthLimit), titleWidthLimit, "...")
 	m.CurrentRepoRemoteInfoList.Title = ansi.Truncate(remoteComponent.ConstructRemoteComponentTitle(titleWidthLimit), titleWidthLimit, "...")
@@ -52,25 +106,61 @@ func TuiWindowSizing(m *types.GittiModel) {
 	m.CurrentRepoCommitLogInfoList.Title = ansi.Truncate(commitlogComponent.ConstructCommitLogComponentTitle(titleWidthLimit), titleWidthLimit, "...")
 	m.CurrentRepoRefLogInfoList.Title = ansi.Truncate(reflogComponent.ConstructRefLogComponentTitle(titleWidthLimit), titleWidthLimit, "...")
 	m.CurrentRepoStashInfoList.Title = ansi.Truncate(stashComponent.ConstructStashComponentTitle(titleWidthLimit), titleWidthLimit, "...")
+}
 
-	// update viewport of detail panel
-	UpdateDetailComponentViewportLayout(m)
-	m.DetailPanelViewportOffset = max(0, int(m.DetailPanelViewport.HorizontalScrollPercent()*float64(m.DetailPanelViewportOffset))-1)
-	m.DetailPanelTwoViewportOffset = max(0, int(m.DetailPanelTwoViewport.HorizontalScrollPercent()*float64(m.DetailPanelTwoViewportOffset))-1)
-	m.DetailPanelViewport.SetXOffset(m.DetailPanelViewportOffset)
-	m.DetailPanelViewport.SetYOffset(m.DetailPanelViewport.YOffset())
-	m.DetailPanelTwoViewport.SetXOffset(m.DetailPanelTwoViewportOffset)
-	m.DetailPanelTwoViewport.SetYOffset(m.DetailPanelTwoViewport.YOffset())
+func sizeFocusedComponent(m *types.GittiModel) {
+	panelWidth := m.Width - 2
+	panelHeight := m.WindowCoreContentHeight
 
-	// to recalculate the viewport of detail panel if it was in line editing mode so that
-	// it matches exactly the position of the selected line in the viewport
+	switch m.CurrentSelectedComponent {
+	case constant.LocalBranchOrTagOrRemoteOrWorktreeComponentPanel:
+		m.CurrentRepoBranchesInfoList.SetWidth(panelWidth)
+		m.CurrentRepoBranchesInfoList.SetHeight(panelHeight)
+		m.CurrentRepoTagInfoList.SetWidth(panelWidth)
+		m.CurrentRepoTagInfoList.SetHeight(panelHeight)
+		m.CurrentRepoRemoteInfoList.SetWidth(panelWidth)
+		m.CurrentRepoRemoteInfoList.SetHeight(panelHeight)
+		m.CurrentRepoWorktreeInfoList.SetWidth(panelWidth)
+		m.CurrentRepoWorktreeInfoList.SetHeight(panelHeight)
+	case constant.ModifiedFilesComponentPanel:
+		m.CurrentRepoModifiedFilesInfoList.SetWidth(panelWidth)
+		m.CurrentRepoModifiedFilesInfoList.SetHeight(panelHeight)
+	case constant.CommitLogOrRefLogComponentPanel:
+		m.CurrentRepoCommitLogInfoList.SetWidth(panelWidth)
+		m.CurrentRepoCommitLogInfoList.SetHeight(panelHeight)
+		m.CurrentRepoRefLogInfoList.SetWidth(panelWidth)
+		m.CurrentRepoRefLogInfoList.SetHeight(panelHeight)
+	case constant.StashComponentPanel:
+		m.CurrentRepoStashInfoList.SetWidth(panelWidth)
+		m.CurrentRepoStashInfoList.SetHeight(panelHeight)
+	case constant.DetailComponentPanel, constant.DetailComponentPanelTwo:
+		m.DetailComponentPanelHeight = panelHeight
+		sizeFocusedDetailComponent(m, panelWidth, panelHeight)
+	case constant.LogComponentPanel:
+		m.LogComponentPanelHeight = panelHeight
+		m.CurrentLogComponentViewport.SetWidth(panelWidth)
+		m.CurrentLogComponentViewport.SetHeight(panelHeight)
+	}
+}
+
+func sizeFocusedDetailComponent(m *types.GittiModel, panelWidth int, panelHeight int) {
+	contentWidth := panelWidth
+	contentHeight := panelHeight
 	if m.IsLineEditingState.Load() {
-		EnterOrReinitLineEditingState(m)
+		contentWidth -= 3
+		contentHeight -= 3
 	}
 
-	// log panel (the height is fixed)
-	m.CurrentLogComponentViewport.SetWidth(m.DetailComponentPanelWidth - 2)
-	m.CurrentLogComponentViewport.SetHeight(m.LogComponentPanelHeight)
+	selectedViewport := &m.DetailPanelViewport
+	selectedCursorViewport := &m.LineEditingIndexCursorViewport
+	if m.CurrentSelectedComponent == constant.DetailComponentPanelTwo {
+		selectedViewport = &m.DetailPanelTwoViewport
+		selectedCursorViewport = &m.LineEditingIndexCursorTwoViewport
+	}
+	selectedViewport.SetWidth(max(0, contentWidth))
+	selectedViewport.SetHeight(max(0, contentHeight))
+	selectedCursorViewport.SetWidth(3)
+	selectedCursorViewport.SetHeight(max(0, contentHeight))
 }
 
 // ------------------------------------
@@ -92,8 +182,9 @@ func LeftPanelDynamicResize(m *types.GittiModel) {
 	// ( gitti status component's height is fix at 3, while the selected one will always get 40% )
 	componentWithDynamicHeight := (len(constant.ComponentPanelNavigationList) - 2)
 
-	// because log component is not a member of left panel, so if this panel was selected, we need top adjust the component with dynamic height as no component in left panel is selected in that case
-	if m.CurrentSelectedComponent == constant.LogComponentPanel {
+	// Because the log component is not a member of the left panel, direct log focus and
+	// detail focus entered from the log both leave every left panel unselected.
+	if isLogFocusForLeftPanel(m) {
 		componentWithDynamicHeight = (len(constant.ComponentPanelNavigationList) - 1)
 		unSelectedComponentPanelHeightPerComponent = int(leftPanelRemainingHeight / componentWithDynamicHeight)
 		// there will be possibility of some height remaining after divide and turn to int, so we use the original - (divided height*the count of component)

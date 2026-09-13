@@ -113,6 +113,8 @@ var jA = LanguageMapping{
 	StagedTitle:                         "ステージされた変更",
 	UnstagedTitle:                       "ステージされていない変更",
 	LineEditingModeTitle:                "行編集モード",
+	ScreenModeNavigationKey:             "=/_",
+	ScreenModeNavigationDescription:     "画面モード",
 	PageNavigationKey:                   "PgUp/PgDn",
 	PageNavigationDescription:           "表示中の1ページ分を上下に移動",
 	CherryPickTitle:                     "ブランチからチェリーピック: \n %s",

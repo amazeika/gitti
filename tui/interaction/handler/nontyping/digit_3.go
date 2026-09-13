@@ -21,7 +21,7 @@ func handleNonTyping3KeyBindingInteraction(m *types.GittiModel) (*types.GittiMod
 			m.CurrentSelectedComponent = constant.CommitLogOrRefLogComponentPanel
 			m.CurrentSelectedComponentIndex = 3
 			m.DetailPanelParentComponent = ""
-			layout.LeftPanelDynamicResize(m)
+			layout.TuiWindowSizing(m)
 			services.FetchDetailComponentPanelInfoService(m, true)
 		}
 	}

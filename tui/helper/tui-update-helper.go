@@ -31,9 +31,9 @@ func GittiTuiUpdateEventHelper(m *types.GittiModel, msg types.GittiTuiUpdateMsg)
 	switch updateEvent {
 	case constant.DETAIL_COMPONENT_PANEL_LAYOUT_STATE_UPDATED_EVENT:
 		layout.UpdateDetailComponentViewportContentAndState(m, updateMsg.Data.(types.DetailPanelStateAndLayoutUpdateEventDataStructure))
-		layout.UpdateDetailComponentViewportLayout(m)
+		layout.TuiWindowSizing(m)
 	case constant.DETAIL_COMPONENT_PANEL_LAYOUT_UPDATED_EVENT:
-		layout.UpdateDetailComponentViewportLayout(m)
+		layout.TuiWindowSizing(m)
 	case constant.DETAIL_COMPONENT_PANEL_LAYOUT_STATE_REINIT_EVENT:
 		layout.DetailComponentReinit(m)
 	case constant.GIT_SWITCH_BRANCH_RESULT_EVENT:

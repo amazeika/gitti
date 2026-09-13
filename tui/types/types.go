@@ -9,6 +9,7 @@ import (
 	"github.com/gohyuhan/gitti/api"
 	"github.com/gohyuhan/gitti/api/git"
 	"github.com/gohyuhan/gitti/logging"
+	"github.com/gohyuhan/gitti/tui/constant"
 )
 
 type GittiModel struct {
@@ -20,6 +21,7 @@ type GittiModel struct {
 	TuiUpdateChannel                                          chan interface{}
 	CurrentSelectedComponent                                  string
 	CurrentSelectedComponentIndex                             int
+	ScreenMode                                                constant.ScreenMode
 	CurrentLocalBranchOrTagOrRemoteOrWorktreeComponentShowing string
 	CurrentCommitLogOrRefLogComponentShowing                  string
 	TotalComponentCount                                       int

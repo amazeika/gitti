@@ -3,6 +3,7 @@ package nontyping
 import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/gohyuhan/gitti/settings"
+	"github.com/gohyuhan/gitti/tui/constant"
 	"github.com/gohyuhan/gitti/tui/layout"
 	"github.com/gohyuhan/gitti/tui/types"
 )
@@ -105,6 +106,12 @@ func Handle(msg tea.KeyPressMsg, m *types.GittiModel) (*types.GittiModel, tea.Cm
 	case "/":
 		return handleNonTypingSlashKeyBindingInteraction(m)
 
+	case "=":
+		return handleNonTypingEqualKeyBindingInteraction(m)
+
+	case "_":
+		return handleNonTypingUnderscoreKeyBindingInteraction(m)
+
 	case "q", "Q":
 		// only work when there is no pop up
 		return handleNonTypingqQKeyBindingInteraction(m)
@@ -144,13 +151,13 @@ func Handle(msg tea.KeyPressMsg, m *types.GittiModel) (*types.GittiModel, tea.Cm
 	case "right", "l":
 		return handleNonTypingRightlKeyBindingInteraction(m)
 	case "-":
-		if !m.ShowPopUp.Load() {
+		if !m.ShowPopUp.Load() && m.ScreenMode == constant.ScreenModeTwoColumn {
 			m.WindowLeftPanelRatio = max(settings.MINLEFTPANELWIDTHRATIO, m.WindowLeftPanelRatio-0.01)
 			layout.TuiWindowSizing(m)
 		}
 		return m, nil
 	case "+":
-		if !m.ShowPopUp.Load() {
+		if !m.ShowPopUp.Load() && m.ScreenMode == constant.ScreenModeTwoColumn {
 			m.WindowLeftPanelRatio = min(settings.MAXLEFTPANELWIDTHRATIO, m.WindowLeftPanelRatio+0.01)
 			layout.TuiWindowSizing(m)
 		}
