@@ -52,6 +52,7 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 			if len(m.CurrentRepoModifiedFilesInfoList.Items()) > 0 {
 				m.CurrentSelectedComponent = constant.DetailComponentPanel
 				m.DetailPanelParentComponent = constant.ModifiedFilesComponentPanel
+				promoteSuccessfulSingleColumnDrillDown(m)
 				layout.TuiWindowSizing(m)
 			}
 		case constant.CommitLogOrRefLogComponentPanel:
@@ -60,12 +61,14 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 				if len(m.CurrentRepoCommitLogInfoList.Items()) > 0 {
 					m.CurrentSelectedComponent = constant.DetailComponentPanel
 					m.DetailPanelParentComponent = constant.CommitLogOrRefLogComponentPanel
+					promoteSuccessfulSingleColumnDrillDown(m)
 					layout.TuiWindowSizing(m)
 				}
 			case constant.SHOW_REFLOG:
 				if len(m.CurrentRepoRefLogInfoList.Items()) > 0 {
 					m.CurrentSelectedComponent = constant.DetailComponentPanel
 					m.DetailPanelParentComponent = constant.CommitLogOrRefLogComponentPanel
+					promoteSuccessfulSingleColumnDrillDown(m)
 					layout.TuiWindowSizing(m)
 				}
 			}
@@ -73,6 +76,7 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 			if len(m.CurrentRepoStashInfoList.Items()) > 0 {
 				m.CurrentSelectedComponent = constant.DetailComponentPanel
 				m.DetailPanelParentComponent = constant.StashComponentPanel
+				promoteSuccessfulSingleColumnDrillDown(m)
 				layout.TuiWindowSizing(m)
 			}
 		case constant.LocalBranchOrTagOrRemoteOrWorktreeComponentPanel:
@@ -792,4 +796,10 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 		}
 	}
 	return m, nil
+}
+
+func promoteSuccessfulSingleColumnDrillDown(m *types.GittiModel) {
+	if m.ScreenMode == constant.ScreenModeSingleColumn {
+		m.ScreenMode = constant.ScreenModeFocused
+	}
 }

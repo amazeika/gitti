@@ -2,7 +2,7 @@
 status: in-progress
 issue: 5
 pr: null
-completed: [1, 2]
+completed: [1, 2, 3]
 ---
 
 # Lazygit-Style Screen Modes — Design Document
@@ -399,17 +399,17 @@ without changing shared footer, warning, or popup behavior.
 
 **ID:** `3`
 **Goal:** Keyboard and mouse interactions obey mode compatibility and act only on visible panels.
-**Tests:** pending
+**Tests:** `tui/interaction/handler/nontyping/screen_mode_test.go`, `tui/interaction/keybinding_test.go`, `tui/interaction/click_test.go`, `tui/interaction/mouse_test.go`
 **Files:** `tui/interaction/handler/nontyping/dispatch.go`, new per-key handler files,
 `enter.go`, `esc.go`, `slash.go`, navigation handlers, `tui/interaction/click.go`, and
 `tui/interaction/mouse.go`.
 
 **Acceptance criteria:**
 
-- [ ] Implement directional compatible-mode cycling.
-- [ ] Promote successful Single-column drill-down and slash navigation to Focused.
-- [ ] Limit ratio keys to Two-column.
-- [ ] Make click and wheel routing mode/visibility aware.
+- [x] Implement directional compatible-mode cycling.
+- [x] Promote successful Single-column drill-down and slash navigation to Focused.
+- [x] Limit ratio keys to Two-column.
+- [x] Make click and wheel routing mode/visibility aware.
 
 ### Phase 4: Discoverability and regression coverage
 

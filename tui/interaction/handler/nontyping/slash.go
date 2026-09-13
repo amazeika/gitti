@@ -16,13 +16,24 @@ import (
 //
 // ------------------------------------
 func handleNonTypingSlashKeyBindingInteraction(m *types.GittiModel) (*types.GittiModel, tea.Cmd) {
-	if !m.ShowPopUp.Load() {
-		if m.CurrentSelectedComponent != constant.LogComponentPanel {
-			m.CurrentSelectedComponent = constant.LogComponentPanel
-			m.DetailPanelParentComponent = ""
-			layout.TuiWindowSizing(m)
-			services.FetchDetailComponentPanelInfoService(m, true)
-		}
+	if m.ShowPopUp.Load() {
+		return m, nil
+	}
+
+	componentChanged := m.CurrentSelectedComponent != constant.LogComponentPanel
+	modeChanged := m.ScreenMode == constant.ScreenModeSingleColumn
+	if componentChanged {
+		m.CurrentSelectedComponent = constant.LogComponentPanel
+		m.DetailPanelParentComponent = ""
+	}
+	if modeChanged {
+		m.ScreenMode = constant.ScreenModeFocused
+	}
+	if componentChanged || modeChanged {
+		layout.TuiWindowSizing(m)
+	}
+	if componentChanged {
+		services.FetchDetailComponentPanelInfoService(m, true)
 	}
 	return m, nil
 }

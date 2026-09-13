@@ -33,10 +33,8 @@ func GittiMouseInteraction(msg tea.MouseMsg, m *types.GittiModel) (*types.GittiM
 	switch msg.Mouse().Button {
 	case tea.MouseWheelLeft:
 		if !m.ShowPopUp.Load() {
-			if m.CurrentSelectedComponent == constant.DetailComponentPanelTwo {
-				m.DetailPanelTwoViewport.ScrollLeft(1)
-			} else {
-				m.DetailPanelViewport.ScrollLeft(1)
+			if viewportToScroll := visibleWheelViewport(m, msg.Mouse().X, msg.Mouse().Y); viewportToScroll != nil {
+				viewportToScroll.ScrollLeft(1)
 			}
 		} else {
 			switch m.PopUpType {
@@ -80,10 +78,8 @@ func GittiMouseInteraction(msg tea.MouseMsg, m *types.GittiModel) (*types.GittiM
 
 	case tea.MouseWheelRight:
 		if !m.ShowPopUp.Load() {
-			if m.CurrentSelectedComponent == constant.DetailComponentPanelTwo {
-				m.DetailPanelTwoViewport.ScrollRight(1)
-			} else {
-				m.DetailPanelViewport.ScrollRight(1)
+			if viewportToScroll := visibleWheelViewport(m, msg.Mouse().X, msg.Mouse().Y); viewportToScroll != nil {
+				viewportToScroll.ScrollRight(1)
 			}
 		} else {
 			switch m.PopUpType {
@@ -128,24 +124,39 @@ func GittiMouseInteraction(msg tea.MouseMsg, m *types.GittiModel) (*types.GittiM
 	case tea.MouseWheelUp, tea.MouseWheelDown:
 		if !m.ShowPopUp.Load() {
 			if !m.IsLineEditingState.Load() {
-				var vpToBeScrolled *viewport.Model
-				if m.CurrentSelectedComponent == constant.DetailComponentPanelTwo {
-					vpToBeScrolled = &m.DetailPanelTwoViewport
-				} else {
-					vpToBeScrolled = &m.DetailPanelViewport
-				}
-
-				switch msg.Mouse().Button {
-				case tea.MouseWheelUp:
-					vpToBeScrolled.ScrollUp(1)
-				case tea.MouseWheelDown:
-					vpToBeScrolled.ScrollDown(1)
+				viewportToScroll := visibleWheelViewport(m, msg.Mouse().X, msg.Mouse().Y)
+				if viewportToScroll != nil {
+					switch msg.Mouse().Button {
+					case tea.MouseWheelUp:
+						viewportToScroll.ScrollUp(1)
+					case tea.MouseWheelDown:
+						viewportToScroll.ScrollDown(1)
+					}
 				}
 			}
 			return m, nil
-		} else {
-			return keyutil.UpDownMouseMsgUpdateForPopUp(msg, m)
 		}
+		return keyutil.UpDownMouseMsgUpdateForPopUp(msg, m)
 	}
 	return m, nil
+}
+
+func visibleWheelViewport(m *types.GittiModel, x int, y int) *viewport.Model {
+	for _, footprint := range visiblePanelFootprints(m) {
+		if !footprint.rectangle.contains(x, y) {
+			continue
+		}
+		switch footprint.region {
+		case mousePanelRegionDetail:
+			if m.CurrentSelectedComponent == constant.DetailComponentPanelTwo {
+				return &m.DetailPanelTwoViewport
+			}
+			return &m.DetailPanelViewport
+		case mousePanelRegionLog:
+			return &m.CurrentLogComponentViewport
+		default:
+			return nil
+		}
+	}
+	return nil
 }
