@@ -4,7 +4,7 @@ Specifications for in-flight and shipped work.
 
 ## In progress
 
-_None._
+- [Canonical local branches and linked-worktree status](6-canonical-local-branches-and-linked-worktree-status.md) — issue [#6](https://github.com/amazeika/gitti/issues/6)
 
 ## Draft
 
