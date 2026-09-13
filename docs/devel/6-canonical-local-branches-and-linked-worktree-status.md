@@ -1,8 +1,8 @@
 ---
-status: in-progress
+status: shipped
 issue: 6
 pr: null
-completed: [1, 2, 3, 4]
+completed: [1, 2, 3, 4, 5]
 ---
 
 # Canonical Local Branches and Linked-Worktree Status — Design Document
@@ -293,6 +293,42 @@ Rollback is a code revert with no data cleanup. The change performs no worktree 
 ## 5. Open Questions
 
 No unresolved design questions remain. Richer detached-HEAD presentation, click-order merge semantics, merge-strategy redesign, and fully qualified local-ref operands are explicit follow-up work rather than blockers.
+
+## 6. Test instructions
+
+Run the automated coverage from the repository root:
+
+```bash
+go test ./...
+```
+
+| Phase | Automated tests |
+| --- | --- |
+| 1 — canonical local-branch snapshots | `api/git/branch_test.go`, `api/git/local_refs_test.go`, `tui/component/branch/types_test.go` |
+| 2 — safe linked-worktree merges | `api/git/merge_test.go`, `tui/popup/branch/merge_test.go` |
+
+Manual validation:
+
+1. **Check branch markers and identity.** Create local branches named `feature` and `+skill`, add a
+   linked worktree with `git worktree add ../gitti-feature feature`, and start Gitti in the original
+   worktree. Confirm the local branch panel shows `*` for the current branch and `+` for `feature`.
+   Press `F` and confirm filtering matches `feature` and `+skill` by their exact names without
+   treating either display marker as part of the identity.
+2. **Merge a linked-worktree branch.** Add a commit to `feature` from its linked worktree, open the
+   merge chooser in the original worktree, and select `feature`. Confirm the chooser retains the
+   `+` status and the merge uses `feature`, not `+ feature`.
+3. **Check detached HEAD.** Detach `HEAD`, refresh Gitti, and confirm the branch panel contains no
+   stale or blank current row while all local branches remain listed. Reattach `HEAD` and confirm
+   the current marker returns on the selected branch.
+4. **Check unusual names.** In a disposable repository, create unusual local refs through Git
+   plumbing and confirm merge operands are treated as branch names rather than options. Gitti keeps
+   local names namespace-relative and places them after Git's `--` option separator.
+
+Remove the temporary linked worktree after validation:
+
+```bash
+git worktree remove ../gitti-feature
+```
 
 ## Outcome
 

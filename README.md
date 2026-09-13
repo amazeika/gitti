@@ -211,6 +211,26 @@ gitti
 | `=` / `_` | Cycle forward or backward through screen modes |
 | `?` | Open context-sensitive keybinding help |
 
+### Branch and linked-worktree status
+
+The local branch panel uses a separate status column so branch names stay unchanged:
+
+| Marker | Meaning |
+| --- | --- |
+| `*` | The branch checked out in the current worktree |
+| `+` | A branch checked out in another linked worktree |
+| blank | A local branch not checked out in any worktree |
+
+The marker is not part of the branch name. Filtering, selection, and branch actions use the exact
+name, so a real branch named `+skill` remains distinct from a linked-worktree marker followed by
+`skill`. Linked-worktree branches remain available in the merge chooser; Gitti passes their
+canonical local names after Git's `--` option separator rather than passing display markers or
+rewriting them as fully qualified refs.
+
+When `HEAD` is detached, the panel omits a synthetic current-branch row and continues to list the
+local branches. Gitti does not add a richer detached-HEAD label, and Git remains responsible for
+rejecting operations that are invalid because a branch is in use by another worktree.
+
 ### Screen modes
 
 Gitti starts in the standard two-column layout. Press `=` or `_` to cycle between:

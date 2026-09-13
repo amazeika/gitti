@@ -4,7 +4,7 @@ Specifications for in-flight and shipped work.
 
 ## In progress
 
-- [Canonical local branches and linked-worktree status](6-canonical-local-branches-and-linked-worktree-status.md) — issue [#6](https://github.com/amazeika/gitti/issues/6)
+_No in-progress specifications._
 
 ## Draft
 
@@ -13,5 +13,6 @@ Specifications for in-flight and shipped work.
 
 ## Shipped
 
+- [Canonical local branches and linked-worktree status](6-canonical-local-branches-and-linked-worktree-status.md) — issue [#6](https://github.com/amazeika/gitti/issues/6)
 - [Lazygit-style screen modes](5-lazygit-style-screen-modes.md) — issue [#5](https://github.com/amazeika/gitti/issues/5)
 - [Commit Log ref decorations and optional all-branches history](1-commit-log-refs-and-all-branches.md) — issue [#1](https://github.com/amazeika/gitti/issues/1)
