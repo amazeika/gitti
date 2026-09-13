@@ -37,6 +37,7 @@ type CommitLog struct {
 
 type GitCommitLog struct {
 	gitCommitLogOutput []CommitLog
+	localBranchNames   []string
 	updateChannel      chan string
 	maxCommitLogCount  string
 	allBranches        bool
@@ -76,6 +77,18 @@ func InitGitCommitLog(updateChannel chan string, gitProcessLock *GitProcessLock,
 func (gCL *GitCommitLog) GitCommitLogOutput() []CommitLog {
 	copied := make([]CommitLog, len(gCL.gitCommitLogOutput))
 	copy(copied, gCL.gitCommitLogOutput)
+	return copied
+}
+
+// ------------------------------------
+//
+//	Return the canonical short names of local branches captured with the latest
+//	commit-log refresh
+//
+// ------------------------------------
+func (gCL *GitCommitLog) LocalBranchNames() []string {
+	copied := make([]string, len(gCL.localBranchNames))
+	copy(copied, gCL.localBranchNames)
 	return copied
 }
 
@@ -125,7 +138,33 @@ func (gCL *GitCommitLog) GetCommitLogs() {
 		return
 	}
 
+	// Capture local refs in this worker rather than borrowing GitBranch state.
+	// Branch and log refreshes run concurrently, so the latter can otherwise see
+	// stale names after a delete or names decorated with `git branch` worktree
+	// markers. A failed enumeration degrades to names parsed from the log in the
+	// UI; clearing the snapshot is safer than falsely compacting a remote-only ref.
+	localBranchNames, localBranchErr := getLocalBranchNames()
+	if localBranchErr != nil {
+		gCL.logging.RegisterNewLog(logging.COMMIT_LOG_OPS, "git for-each-ref", logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.COMMIT_LOG_OPS, localBranchErr.Error()), true)
+		localBranchNames = nil
+	}
+
 	gCL.gitCommitLogOutput = gitCommitLogOutput
+	gCL.localBranchNames = localBranchNames
+}
+
+// ------------------------------------
+//
+//	Read canonical local branch names without the status markers from `git branch`
+//
+// ------------------------------------
+func getLocalBranchNames() ([]string, error) {
+	gitArgs := []string{"for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/"}
+	output, err := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false).Output()
+	if err != nil {
+		return nil, err
+	}
+	return processGeneralGitOpsOutputIntoStringArray(output), nil
 }
 
 // ------------------------------------

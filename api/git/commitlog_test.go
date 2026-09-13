@@ -379,6 +379,71 @@ func TestGetCommitLogsKeepsTheLastGoodHistoryWhenTheReadFails(t *testing.T) {
 	}
 }
 
+func TestGetCommitLogsCapturesCanonicalLocalBranchNames(t *testing.T) {
+	_, run := repositoryUnderTest(t)
+	run("commit", "-q", "--allow-empty", "-m", "first")
+	run("branch", "feature")
+	linkedWorktree := filepath.Join(t.TempDir(), "linked")
+	run("worktree", "add", "-q", linkedWorktree, "feature")
+
+	gitCommitLog, gittiLogging := commitLogUnderTest(t, false)
+	gitCommitLog.GetCommitLogs()
+
+	branchNames := gitCommitLog.LocalBranchNames()
+	if !slices.Contains(branchNames, "master") || !slices.Contains(branchNames, "feature") {
+		t.Errorf("LocalBranchNames = %v, want canonical master and feature names", branchNames)
+	}
+	for _, branchName := range branchNames {
+		if strings.HasPrefix(branchName, "+ ") || strings.HasPrefix(branchName, "* ") {
+			t.Errorf("LocalBranchNames contains status-marked name %q", branchName)
+		}
+	}
+	if recorded := errorLogs(gittiLogging); recorded != nil {
+		t.Errorf("capturing local branch names recorded errors: %v", recorded)
+	}
+}
+
+func TestGetCommitLogsClearsDeletedLocalBranchNames(t *testing.T) {
+	_, run := repositoryUnderTest(t)
+	run("commit", "-q", "--allow-empty", "-m", "first")
+	run("branch", "temporary")
+
+	gitCommitLog, _ := commitLogUnderTest(t, false)
+	gitCommitLog.GetCommitLogs()
+	if !slices.Contains(gitCommitLog.LocalBranchNames(), "temporary") {
+		t.Fatal("initial local branch snapshot does not contain temporary")
+	}
+
+	run("branch", "-D", "temporary")
+	gitCommitLog.GetCommitLogs()
+	if slices.Contains(gitCommitLog.LocalBranchNames(), "temporary") {
+		t.Errorf("LocalBranchNames = %v after deletion, want no stale temporary branch", gitCommitLog.LocalBranchNames())
+	}
+}
+
+func TestGetCommitLogsCompactsRemoteTipWhenLocalBranchIsAhead(t *testing.T) {
+	_, run := repositoryUnderTest(t)
+	run("commit", "-q", "--allow-empty", "-m", "shared")
+	run("remote", "add", "origin", "https://example.com/repository.git")
+	run("update-ref", "refs/remotes/origin/feature", "HEAD")
+	run("switch", "-q", "-c", "feature")
+	run("commit", "-q", "--allow-empty", "-m", "local ahead")
+	run("branch", "-D", "master")
+
+	gitCommitLog, _ := commitLogUnderTest(t, false)
+	gitCommitLog.GetCommitLogs()
+
+	for _, commit := range gitCommitLog.GitCommitLogOutput() {
+		if commit.Message == "shared" {
+			if got, want := CompactDecorations(commit.Refs, gitCommitLog.LocalBranchNames()...), "feature^"; got != want {
+				t.Errorf("compacted remote tip = %q, want %q", got, want)
+			}
+			return
+		}
+	}
+	t.Fatal("shared commit not found in commit log")
+}
+
 func TestGetCommitLogsWalksOnlyHeadWhenAllBranchesIsOff(t *testing.T) {
 	_, run := repositoryUnderTest(t)
 	run("commit", "-q", "--allow-empty", "-m", "on master")

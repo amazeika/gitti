@@ -60,6 +60,7 @@ log now passes `--decorate=full` and reads `refs/heads/…`, `refs/remotes/…` 
 | `HEAD -> refs/heads/wip` | `*wip` | checked out, not pushed |
 | `refs/heads/main, refs/remotes/origin/main` | `main^` | not checked out, pushed |
 | `refs/heads/wip` | `wip` | not checked out, not pushed |
+| `refs/remotes/origin/main` with local `main` ahead | `main^` | matching remote tip is on an older commit |
 | `refs/remotes/origin/release` | `origin/release` | remote-only: no local branch to collapse into |
 | `tag: refs/tags/v0.9.0` | `v0.9.0` | tag, told apart by colour |
 | `HEAD` | `*HEAD` | detached; the row already prints the hash |
@@ -72,7 +73,9 @@ remotes costs no more room than one.
 The marker is ASCII deliberately. `°` and `·` are East Asian Ambiguous width: a terminal
 configured for one of the three CJK locales gitti ships draws them two columns wide while
 `ansi.StringWidth` measures one, misaligning the row and overrunning a width budget taken
-against that measurement.
+against that measurement. Compaction receives the repository's local branch names so a
+remote tip still uses `branch^` when its matching local tip is ahead or diverged and
+therefore decorates another commit.
 
 Entries render in a fixed order — checked-out branch, other local branches, remote-only
 branches, tags, anything unrecognised — rather than git's, which varies with the order the
@@ -118,8 +121,8 @@ tag was not. This closes a follow-up recorded in the shipped specification's Out
 
 ## 3. Acceptance criteria
 
-- [ ] A local branch and the remote-tracking branches that match it render as one entry
-      carrying a trailing remote marker, not once per ref.
+- [ ] A local branch and the remote-tracking branches that match it render with a trailing
+      remote marker, including when the local and remote tips decorate different commits.
 - [ ] The checked-out branch carries a leading marker in place of `HEAD -> `, and at most
       one row in the log carries it.
 - [ ] A branch existing only on a remote keeps its remote prefix, because there the remote

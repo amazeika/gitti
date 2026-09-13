@@ -41,6 +41,45 @@ func TestCompactDecorationsKeepsTheRemoteNameWhenNoLocalBranchExists(t *testing.
 	}
 }
 
+func TestCompactDecorationsDoesNotMatchUnrelatedOrPrefixLocalBranches(t *testing.T) {
+	for _, localBranch := range []string{"main", "feature", "feature/x/more"} {
+		got := CompactDecorations("refs/remotes/origin/feature/x", localBranch)
+		if want := "origin/feature/x"; got != want {
+			t.Errorf("CompactDecorations with local %q = %q, want %q", localBranch, got, want)
+		}
+	}
+}
+
+func TestCompactDecorationsSameCommitMatchWinsWithKnownLocalBranch(t *testing.T) {
+	got := CompactDecorations("HEAD -> refs/heads/main, refs/remotes/origin/main", "main")
+
+	if want := "*main^"; got != want {
+		t.Errorf("CompactDecorations = %q, want %q", got, want)
+	}
+}
+
+func TestCompactDecorationsMarksARemoteTipWhenTheLocalBranchIsAhead(t *testing.T) {
+	// The local ref decorates a newer commit, so it is not present in this raw
+	// decoration list. Repository-wide branch knowledge must still let the remote
+	// tip use the compact marker instead of repeating the origin-qualified name.
+	got := CompactDecorations("refs/remotes/origin/feature/x", "feature/x")
+
+	if want := "feature/x^"; got != want {
+		t.Errorf("CompactDecorations = %q, want %q", got, want)
+	}
+}
+
+func TestCompactDecorationsCollapsesSeveralRemoteTipsForAnAheadLocalBranch(t *testing.T) {
+	got := CompactDecorations(
+		"refs/remotes/origin/feature/x, refs/remotes/upstream/feature/x",
+		"feature/x",
+	)
+
+	if want := "feature/x^"; got != want {
+		t.Errorf("CompactDecorations = %q, want one marker for all matching remotes", got)
+	}
+}
+
 func TestCompactDecorationsCollapsesSeveralRemotesIntoOneMarker(t *testing.T) {
 	got := CompactDecorations("HEAD -> refs/heads/main, refs/remotes/origin/main, refs/remotes/upstream/main")
 

@@ -29,6 +29,28 @@ func InitGitCommitLogList(m *types.GittiModel) bool {
 	}
 	titleWidthLimit := m.WindowLeftPanelWidth - constant.ListItemOrTitleWidthPad - 2
 
+	// Compaction needs repository-wide local branch names. When a local branch is
+	// ahead of its upstream, its decoration and the remote tip are on different
+	// commits; looking only at one row would incorrectly leave "origin/" expanded.
+	// The commit-log service captures canonical refs in the same refresh worker,
+	// avoiding stale branch snapshots and `git branch` worktree status markers.
+	knownLocalBranchNames := m.GitOperations.GitCommitLog.LocalBranchNames()
+	localBranchNameSet := make(map[string]struct{}, len(knownLocalBranchNames))
+	for _, branchName := range knownLocalBranchNames {
+		localBranchNameSet[branchName] = struct{}{}
+	}
+	for _, commitLog := range latestGitCommitLog {
+		for _, decoration := range git.ParseDecorations(commitLog.Refs) {
+			if decoration.Kind == git.LocalBranchDecoration {
+				localBranchNameSet[decoration.Name] = struct{}{}
+			}
+		}
+	}
+	knownLocalBranchNames = knownLocalBranchNames[:0]
+	for branchName := range localBranchNameSet {
+		knownLocalBranchNames = append(knownLocalBranchNames, branchName)
+	}
+
 	for _, commitLog := range latestGitCommitLog {
 		laneCharList := make([]Cell, len(commitLog.LaneCharInfo))
 		for i, c := range commitLog.LaneCharInfo {
@@ -41,7 +63,7 @@ func InitGitCommitLogList(m *types.GittiModel) bool {
 		latestGitCommitLogItemArray = append(latestGitCommitLogItemArray, GitCommitLogItem{
 			Hash:         commitLog.Hash,
 			Parents:      commitLog.Parents,
-			Refs:         git.CompactDecorations(commitLog.Refs),
+			Refs:         git.CompactDecorations(commitLog.Refs, knownLocalBranchNames...),
 			RefsFilter:   git.DecorationFilterText(commitLog.Refs),
 			BranchLabel:  git.DecorationBranchLabel(commitLog.Refs),
 			Message:      commitLog.Message,

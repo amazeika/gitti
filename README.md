@@ -260,15 +260,16 @@ Ref decorations appear beside the commit subject in a compact form:
 | Shown | Meaning |
 | --- | --- |
 | `*main` | `main` is the branch you have checked out |
-| `main^` | a remote has this commit too, so the branch is pushed |
-| `*main^` | both of the above |
+| `main^` | a remote-tracking ref matching local branch `main` points here |
+| `*main^` | the checked-out branch and its matching remote tip point here |
 | `origin/release` | exists only on the remote; there is no local branch of that name |
 | `v0.9.0` | a tag |
 | `*HEAD` | detached `HEAD`; the commit hash is in the row's first column |
 
 `*` appears at most once in the whole log, which is most useful in all-branches mode where
 many branch tips are on screen at once. A branch that lives on several remotes still shows
-a single `^`.
+a single `^`. If the local branch is ahead, the local tip renders as `*main` and the older
+remote tip renders as `main^` rather than repeating `origin/main`.
 
 Filtering is not narrowed by what a row draws: a pushed branch renders as `main^`, but
 pressing `F` and typing either `main` or `origin/main` isolates its commits.

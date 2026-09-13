@@ -57,6 +57,10 @@ type Decoration struct {
 	// OnRemote marks a local branch that at least one remote also points at for
 	// this commit, which is what lets the duplicate remote entry be dropped.
 	OnRemote bool
+	// MatchesLocal marks a remote tip whose same-named local branch points at a
+	// different commit. It lets an ahead or diverged local branch keep the compact
+	// branch^ form even though the local decoration is on another log row.
+	MatchesLocal bool
 }
 
 // ------------------------------------
@@ -158,28 +162,41 @@ func classifyDecoration(entry string) Decoration {
 //	meaning. git names a pushed branch twice — once local, once per remote — and
 //	that repetition, not the "HEAD -> " and "origin/" labels, is what makes the
 //	raw list too wide for a commit log row. A local branch a remote also points at
-//	is written once with a trailing marker; the checked-out branch takes a leading
-//	marker in place of "HEAD -> "; a tag drops its namespace and is told apart by
-//	colour. Only a branch that exists on a remote with no local counterpart keeps
-//	its remote prefix, because there the remote name is the information
+//	is written once with a trailing marker; a remote tip for a same-named local
+//	branch that is ahead or diverged uses that compact form on its own row too.
+//	The checked-out branch takes a leading marker in place of "HEAD -> "; a tag
+//	drops its namespace and is told apart by colour. Only a branch that exists on
+//	a remote with no repository-wide local counterpart keeps its remote prefix,
+//	because there the remote name is the information. knownLocalBranchNames
+//	supplies short branch names (without refs/heads/) that need not decorate this
+//	particular commit.
 //
 // ------------------------------------
-func CompactDecorations(raw string) string {
+func CompactDecorations(raw string, knownLocalBranchNames ...string) string {
 	decorations := ParseDecorations(raw)
 	if len(decorations) == 0 {
 		return ""
 	}
 
 	// A local branch can be matched by several remotes at once. The marker means
-	// "at least one remote is here too", so the first match settles it.
+	// "this branch name has at least one remote tip", so the first match settles
+	// it whether the local ref is on this commit or another row in the log.
 	localByName := make(map[string]int, len(decorations))
+	knownLocalByName := make(map[string]struct{}, len(knownLocalBranchNames)+len(decorations))
+	for _, branchName := range knownLocalBranchNames {
+		if branchName != "" {
+			knownLocalByName[branchName] = struct{}{}
+		}
+	}
 	for index, decoration := range decorations {
 		if decoration.Kind == LocalBranchDecoration {
 			localByName[decoration.Name] = index
+			knownLocalByName[decoration.Name] = struct{}{}
 		}
 	}
 
 	dropped := make([]bool, len(decorations))
+	compactRemoteByName := make(map[string]struct{})
 	for index, decoration := range decorations {
 		if decoration.Kind != RemoteBranchDecoration {
 			continue
@@ -187,6 +204,16 @@ func CompactDecorations(raw string) string {
 		if localIndex, found := localByName[decoration.Name]; found {
 			decorations[localIndex].OnRemote = true
 			dropped[index] = true
+			continue
+		}
+		if _, found := knownLocalByName[decoration.Name]; found {
+			// Several remotes with the same branch name still need only one marker.
+			if _, alreadyCompacted := compactRemoteByName[decoration.Name]; alreadyCompacted {
+				dropped[index] = true
+				continue
+			}
+			decorations[index].MatchesLocal = true
+			compactRemoteByName[decoration.Name] = struct{}{}
 		}
 	}
 
@@ -239,8 +266,12 @@ func compactDecorationText(decoration Decoration) string {
 	if decoration.IsHead {
 		builder.WriteString(HeadDecorationMarker)
 	}
-	builder.WriteString(decoration.ShortName())
-	if decoration.OnRemote {
+	if decoration.Kind == RemoteBranchDecoration && decoration.MatchesLocal {
+		builder.WriteString(decoration.Name)
+	} else {
+		builder.WriteString(decoration.ShortName())
+	}
+	if decoration.OnRemote || decoration.MatchesLocal {
 		builder.WriteString(RemoteDecorationMarker)
 	}
 	return builder.String()
