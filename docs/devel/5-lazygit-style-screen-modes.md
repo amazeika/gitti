@@ -2,7 +2,7 @@
 status: in-progress
 issue: 5
 pr: null
-completed: [1, 2, 3, 4, 5]
+completed: [1, 2, 3, 4, 5, 6]
 ---
 
 # Lazygit-Style Screen Modes — Design Document
@@ -434,8 +434,8 @@ packages.
 
 **Acceptance criteria:**
 
-- [ ] The union of test paths declared by completed phases passes through the scoped resolver.
-- [ ] Failures surfaced by the sweep are remediated in this phase.
+- [x] The union of test paths declared by completed phases passes through the scoped resolver.
+- [x] Failures surfaced by the sweep are remediated in this phase.
 
 ### Phase 6: Outcome
 
@@ -540,3 +540,25 @@ go vet ./...
 - Popups remain overlays, block mode changes, and close back to the same mode.
 - Mode survives worktree switching but is not persisted across process restarts.
 - All automated tests, `go vet ./...`, and gofmt cleanliness pass.
+
+## Outcome
+
+Gitti now starts in the unchanged two-column layout and adds full-width single-column and
+focused layouts. `=` and `_` cycle through the modes compatible with the selected panel,
+with localized help in the normal footer. Focus-changing keyboard and mouse interactions
+reflow through one mode-aware layout path, hidden panels cannot receive click or wheel
+input, and popups continue to overlay the current mode without changing it. Runtime mode
+survives worktree reinitialization but is not persisted across process restarts.
+
+Detail subpanels, line-editing geometry, viewport offsets, dynamic primary-stack heights,
+and the two-column width ratio are preserved or clamped according to the design when the
+visible geometry changes. Ratio controls remain exclusive to two-column mode.
+
+**Deviations.** None.
+
+**Decisions.** No implementation decisions changed the design.
+
+**Deferred.** None.
+
+**Full sweep.** The cumulative repository test command, `go test ./...`, passed with no
+failures and required no remediation.
