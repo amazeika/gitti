@@ -2,7 +2,7 @@
 status: in-progress
 issue: 6
 pr: null
-completed: [1, 2]
+completed: [1, 2, 3]
 ---
 
 # Canonical Local Branches and Linked-Worktree Status — Design Document
