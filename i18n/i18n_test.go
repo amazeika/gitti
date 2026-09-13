@@ -27,3 +27,21 @@ func TestEveryLocaleTranslatesEveryString(t *testing.T) {
 		}
 	}
 }
+
+func TestEveryLocaleTranslatesScreenModeNavigation(t *testing.T) {
+	locales := map[string]*LanguageMapping{
+		"en":      &eN,
+		"ja":      &jA,
+		"zh-hans": &zH_HANS,
+		"zh-hant": &zH_HANT,
+	}
+
+	for name, mapping := range locales {
+		if mapping.ScreenModeNavigationKey != "=/_" {
+			t.Errorf("%s screen mode key = %q, want %q", name, mapping.ScreenModeNavigationKey, "=/_")
+		}
+		if mapping.ScreenModeNavigationDescription == "" {
+			t.Errorf("%s is missing the screen mode description", name)
+		}
+	}
+}

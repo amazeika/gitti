@@ -225,6 +225,28 @@ func TestPopupOverlaysEveryBaseModeWithoutChangingIt(t *testing.T) {
 	}
 }
 
+func TestKeybindingBarAdvertisesScreenModesOnlyOnMainPage(t *testing.T) {
+	model := initScreenModeLayoutModel(t, 160, 40)
+	model.CurrentSelectedComponent = constant.ModifiedFilesComponentPanel
+
+	mainBar := ansi.Strip(renderKeyBindingComponentPanel(model.Width, model))
+	screenModeHelp := fmt.Sprintf("[%s] %s", i18n.LANGUAGEMAPPING.ScreenModeNavigationKey, i18n.LANGUAGEMAPPING.ScreenModeNavigationDescription)
+	pageNavigationHelp := fmt.Sprintf("[%s] %s", i18n.LANGUAGEMAPPING.PageNavigationKey, i18n.LANGUAGEMAPPING.PageNavigationDescription)
+	if !strings.Contains(mainBar, screenModeHelp) {
+		t.Errorf("normal keybinding bar = %q, want screen mode help %q", mainBar, screenModeHelp)
+	}
+	if strings.Index(mainBar, screenModeHelp) > strings.Index(mainBar, pageNavigationHelp) {
+		t.Errorf("normal keybinding bar = %q, want screen mode help before page navigation", mainBar)
+	}
+
+	model.ShowPopUp.Store(true)
+	model.PopUpType = constant.CommitPopUp
+	popupBar := ansi.Strip(renderKeyBindingComponentPanel(model.Width, model))
+	if strings.Contains(popupBar, screenModeHelp) {
+		t.Errorf("popup keybinding bar = %q, must omit screen mode help", popupBar)
+	}
+}
+
 func screenModeTestName(mode constant.ScreenMode, width int, height int) string {
 	return strings.ReplaceAll(fmt.Sprintf("%s at %dx%d", screenModeName(mode), width, height), " ", "_")
 }

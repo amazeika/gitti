@@ -2,7 +2,7 @@
 status: in-progress
 issue: 5
 pr: null
-completed: [1, 2, 3]
+completed: [1, 2, 3, 4]
 ---
 
 # Lazygit-Style Screen Modes — Design Document
@@ -416,15 +416,15 @@ without changing shared footer, warning, or popup behavior.
 **ID:** `4`
 **Goal:** Every locale advertises mode navigation, and automated regressions cover the complete
 screen-mode contract.
-**Tests:** pending
+**Tests:** `i18n/i18n_test.go`, `tui/layout/view_test.go`
 **Files:** `i18n/types.go`, all four locale files, and new tests beside the affected
 packages.
 
 **Acceptance criteria:**
 
-- [ ] Add and render the normal-page screen-mode hint.
-- [ ] Add table-driven state, layout, rendering, navigation, and mouse tests.
-- [ ] Run repository validation and the manual matrix below.
+- [x] Add and render the normal-page screen-mode hint.
+- [x] Add table-driven state, layout, rendering, navigation, and mouse tests.
+- [x] Run repository validation and the manual matrix below.
 
 ### Phase 5: Full test sweep
 

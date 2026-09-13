@@ -646,6 +646,10 @@ func renderKeyBindingComponentPanel(width int, m *types.GittiModel) string {
 		pageNavigationHelp := fmt.Sprintf("[%s] %s", i18n.LANGUAGEMAPPING.PageNavigationKey, i18n.LANGUAGEMAPPING.PageNavigationDescription)
 		keys = append([]string{pageNavigationHelp}, keys...)
 	}
+	if !m.ShowPopUp.Load() {
+		screenModeHelp := fmt.Sprintf("[%s] %s", i18n.LANGUAGEMAPPING.ScreenModeNavigationKey, i18n.LANGUAGEMAPPING.ScreenModeNavigationDescription)
+		keys = append([]string{screenModeHelp}, keys...)
+	}
 
 	var keyBindingLine string
 	keyBindingLine = strings.Join(keys, "  |  ")
