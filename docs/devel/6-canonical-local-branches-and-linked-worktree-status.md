@@ -2,7 +2,7 @@
 status: in-progress
 issue: 6
 pr: null
-completed: []
+completed: [1]
 ---
 
 # Canonical Local Branches and Linked-Worktree Status — Design Document
@@ -178,7 +178,7 @@ Rollback is a code revert with no data cleanup. The change performs no worktree 
 
 **ID:** `1`
 **Goal:** every supported HEAD state exposes one complete canonical local-branch generation, and the local panel renders current/linked status without mixing decoration into identity
-**Tests:** pending
+**Tests:** `api/git/branch_test.go`, `api/git/local_refs_test.go`, `tui/component/branch/types_test.go`
 
 **Acceptance criteria:**
 

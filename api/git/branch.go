@@ -2,26 +2,41 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gohyuhan/gitti/executor"
 	"github.com/gohyuhan/gitti/logging"
 )
 
 type BranchInfo struct {
-	BranchName   string
-	IsCheckedOut bool
+	BranchName                   string
+	IsCheckedOut                 bool
+	IsCheckedOutInLinkedWorktree bool
+}
+
+type branchSnapshot struct {
+	currentCheckOut BranchInfo
+	allBranches     []BranchInfo
+	isRepoUnborn    bool
+}
+
+// LocalBranchSnapshot is one immutable generation of local branch state.
+type LocalBranchSnapshot struct {
+	CurrentCheckOut BranchInfo
+	AllBranches     []BranchInfo
+	IsRepoUnborn    bool
 }
 
 type GitBranch struct {
-	isRepoUnborn    bool // meaning this is a newly init repo, no commit on any branch yet
-	currentCheckOut BranchInfo
-	allBranches     []BranchInfo // this refer to all local branch
-	remoteBranches  []BranchInfo
-	logging         *logging.GittiLogging
-	gitProcessLock  *GitProcessLock
-	FfMerge         bool // determine when merge it was fast forward or not, fast forward will not have the merge commit and non fast forward will have one
+	localSnapshot  atomic.Pointer[branchSnapshot]
+	remoteBranches []BranchInfo
+	logging        *logging.GittiLogging
+	gitProcessLock *GitProcessLock
+	FfMerge        bool // determine when merge it was fast forward or not, fast forward will not have the merge commit and non fast forward will have one
 }
 
 // ------------------------------------
@@ -31,11 +46,11 @@ type GitBranch struct {
 // ------------------------------------
 func InitGitBranch(gitProcessLock *GitProcessLock, ffMerge bool, logging *logging.GittiLogging) *GitBranch {
 	gitBranch := GitBranch{
-		isRepoUnborn:   false,
 		gitProcessLock: gitProcessLock,
 		logging:        logging,
 		FfMerge:        ffMerge,
 	}
+	gitBranch.localSnapshot.Store(&branchSnapshot{allBranches: []BranchInfo{}})
 	return &gitBranch
 }
 
@@ -45,7 +60,7 @@ func InitGitBranch(gitProcessLock *GitProcessLock, ffMerge bool, logging *loggin
 //
 // ------------------------------------
 func (gb *GitBranch) CurrentCheckOut() BranchInfo {
-	return gb.currentCheckOut
+	return gb.localSnapshot.Load().currentCheckOut
 }
 
 // ------------------------------------
@@ -54,8 +69,26 @@ func (gb *GitBranch) CurrentCheckOut() BranchInfo {
 //
 // ------------------------------------
 func (gb *GitBranch) AllBranches() []BranchInfo {
-	copied := make([]BranchInfo, len(gb.allBranches))
-	copy(copied, gb.allBranches)
+	return copyBranchInfos(gb.localSnapshot.Load().allBranches)
+}
+
+// ------------------------------------
+//
+//	Return current and other local branches from one published generation.
+//
+// ------------------------------------
+func (gb *GitBranch) LocalBranchSnapshot() LocalBranchSnapshot {
+	snapshot := gb.localSnapshot.Load()
+	return LocalBranchSnapshot{
+		CurrentCheckOut: snapshot.currentCheckOut,
+		AllBranches:     copyBranchInfos(snapshot.allBranches),
+		IsRepoUnborn:    snapshot.isRepoUnborn,
+	}
+}
+
+func copyBranchInfos(branches []BranchInfo) []BranchInfo {
+	copied := make([]BranchInfo, len(branches))
+	copy(copied, branches)
 	return copied
 }
 
@@ -76,7 +109,7 @@ func (gb *GitBranch) RemoteBranches() []BranchInfo {
 //
 // ------------------------------------
 func (gb *GitBranch) IsRepoUnborn() bool {
-	return gb.isRepoUnborn
+	return gb.localSnapshot.Load().isRepoUnborn
 }
 
 // ------------------------------------
@@ -86,56 +119,99 @@ func (gb *GitBranch) IsRepoUnborn() bool {
 //
 // ------------------------------------
 func (gb *GitBranch) GetLatestBranchesInfo() {
-	gitArgs := []string{"branch"}
-	allBranches := []BranchInfo{}
-
-	gb.isRepoUnborn = false
-
-	branchCmdExecutor := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
-	gitOutput, err := branchCmdExecutor.Output()
+	localRefs, err := discoverLocalRefs()
 	if err != nil {
-		gb.logging.RegisterNewLog(logging.GET_LATEST_BRANCH_INFO_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.GET_LATEST_BRANCH_INFO_OPS, err.Error()), true)
+		gb.logBranchRefreshFailure([]string{"for-each-ref", "refs/heads/"}, err)
 		return
 	}
 
-	gitBranches := processGeneralGitOpsOutputIntoStringArray(gitOutput)
+	snapshot, err := gb.classifyLocalRefs(localRefs)
+	if err != nil {
+		return
+	}
+	gb.localSnapshot.Store(snapshot)
+}
 
-	gb.allBranches = make([]BranchInfo, 0, max(0, len(gitBranches)-1))
-	// meaning this was a newly init repo with a uncommitted branch
-	if len(gitBranches) < 1 {
-		gitArgs := []string{"symbolic-ref", "--short", "HEAD"}
-		branchCmdExecutor = executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
-		gitOutput, err := branchCmdExecutor.Output()
-		if err != nil {
-			gb.logging.RegisterNewLog(logging.GET_LATEST_BRANCH_INFO_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.GET_LATEST_BRANCH_INFO_OPS, err.Error()), true)
-			return
-		}
-		gitBranches = processGeneralGitOpsOutputIntoStringArray(gitOutput)
-		gb.currentCheckOut = BranchInfo{
-			BranchName:   gitBranches[0],
-			IsCheckedOut: true,
-		}
-		gb.isRepoUnborn = true
-	} else {
-		for _, branch := range gitBranches {
-			branch = strings.TrimSpace(branch)
-
-			if strings.HasPrefix(branch, "*") {
-				branch = strings.TrimSpace(strings.TrimPrefix(branch, "*"))
-				gb.currentCheckOut = BranchInfo{
-					BranchName:   branch,
-					IsCheckedOut: true,
+func (gb *GitBranch) classifyLocalRefs(localRefs []localRefInfo) (*branchSnapshot, error) {
+	for _, localRef := range localRefs {
+		if localRef.current {
+			snapshot := &branchSnapshot{currentCheckOut: branchInfoFromLocalRef(localRef)}
+			for _, otherRef := range localRefs {
+				if !otherRef.current {
+					snapshot.allBranches = append(snapshot.allBranches, branchInfoFromLocalRef(otherRef))
 				}
-			} else {
-				allBranches = append(allBranches, BranchInfo{
-					BranchName:   branch,
-					IsCheckedOut: false,
-				})
 			}
+			return snapshot, nil
 		}
 	}
 
-	gb.allBranches = allBranches
+	gitArgs := []string{"symbolic-ref", "--quiet", "HEAD"}
+	output, err := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false).Output()
+	if err != nil {
+		if isDetachedHeadError(err) {
+			return &branchSnapshot{allBranches: branchInfosFromLocalRefs(localRefs)}, nil
+		}
+		gb.logBranchRefreshFailure(gitArgs, err)
+		return nil, err
+	}
+	branchName, err := parseSymbolicHead(output)
+	if err != nil {
+		gb.logBranchRefreshFailure(gitArgs, err)
+		return nil, err
+	}
+
+	snapshot := &branchSnapshot{
+		currentCheckOut: BranchInfo{BranchName: branchName, IsCheckedOut: true},
+		isRepoUnborn:    true,
+	}
+	for _, localRef := range localRefs {
+		if localRef.name != branchName {
+			snapshot.allBranches = append(snapshot.allBranches, branchInfoFromLocalRef(localRef))
+		}
+	}
+	return snapshot, nil
+}
+
+func branchInfoFromLocalRef(localRef localRefInfo) BranchInfo {
+	return BranchInfo{
+		BranchName:                   localRef.name,
+		IsCheckedOut:                 localRef.current,
+		IsCheckedOutInLinkedWorktree: localRef.occupied && !localRef.current,
+	}
+}
+
+func branchInfosFromLocalRefs(localRefs []localRefInfo) []BranchInfo {
+	branches := make([]BranchInfo, 0, len(localRefs))
+	for _, localRef := range localRefs {
+		branches = append(branches, branchInfoFromLocalRef(localRef))
+	}
+	return branches
+}
+
+func parseSymbolicHead(output []byte) (string, error) {
+	if len(output) < 2 || output[len(output)-1] != '\n' {
+		return "", fmt.Errorf("symbolic-ref returned malformed output")
+	}
+
+	const localRefPrefix = "refs/heads/"
+	symbolicRef := string(output[:len(output)-1])
+	if !strings.HasPrefix(symbolicRef, localRefPrefix) || strings.ContainsAny(symbolicRef, "\n\x00") {
+		return "", fmt.Errorf("symbolic-ref returned malformed output")
+	}
+	branchName := symbolicRef[len(localRefPrefix):]
+	if branchName == "" {
+		return "", fmt.Errorf("symbolic-ref returned malformed output")
+	}
+	return branchName, nil
+}
+
+func isDetachedHeadError(err error) bool {
+	var exitError *exec.ExitError
+	return errors.As(err, &exitError) && exitError.ExitCode() == 1
+}
+
+func (gb *GitBranch) logBranchRefreshFailure(gitArgs []string, err error) {
+	gb.logging.RegisterNewLog(logging.GET_LATEST_BRANCH_INFO_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.GET_LATEST_BRANCH_INFO_OPS, err.Error()), true)
 }
 
 // ------------------------------------
@@ -163,7 +239,7 @@ func (gb *GitBranch) GitCreateNewBranch(branchName string) {
 
 	gitArgs := []string{"branch", branchName}
 
-	if gb.isRepoUnborn {
+	if gb.IsRepoUnborn() {
 		gitArgs = []string{"branch", "-M", branchName}
 	}
 
