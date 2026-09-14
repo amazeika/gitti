@@ -77,6 +77,10 @@ type GitRebaseResultEventDataStructure struct {
 
 type GitPushResultEventDataStructure struct {
 	Success bool
+	Result  git.GitPushResult
+	// Attempt identifies the push attempt that produced the result; the
+	// popup rejects events for any attempt it is not displaying
+	Attempt int64
 }
 
 type GitCommitResultEventDataStructure struct {

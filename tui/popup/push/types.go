@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"github.com/gohyuhan/gitti/api/git"
 	"github.com/gohyuhan/gitti/tui/constant"
 	"github.com/gohyuhan/gitti/tui/style"
 	"github.com/gohyuhan/gitti/tui/utils"
@@ -100,4 +101,14 @@ type GitRemotePushPopUpModel struct {
 	IsCancelled                 atomic.Bool    // flag to indicate if the operation was cancelled by user
 	// CancelFunc is used to cancel the git push operation
 	CancelFunc context.CancelFunc
+	// LastPushResult is the deterministic diagnostics shown once the attempt
+	// finishes; it is cleared before every new attempt
+	LastPushResult git.GitPushResult
+	// ActivePushAttemptID identifies the push attempt the popup currently
+	// displays; attempt ids are allocated process-wide, so a reconstructed
+	// popup can never be assigned an id an earlier instance's attempt
+	// already used, and a result event carrying any other attempt id is
+	// rejected so a late result from a cancelled attempt cannot overwrite a
+	// new push
+	ActivePushAttemptID atomic.Int64
 }

@@ -2,7 +2,7 @@
 status: in-progress
 issue: 7
 pr: null
-completed: []
+completed: [1]
 ---
 
 # Reliable Push Result and State Refresh — Design Document
@@ -130,7 +130,7 @@ Argv and cwd are rendered as data and are never reparsed or passed through a she
 
 **ID:** `1`
 **Goal:** every background push option produces one observable, unambiguous process result without changing what Git is asked to push
-**Tests:** pending
+**Tests:** `api/git/commit_test.go`, `i18n/i18n_test.go`, `tui/popup/push/push_test.go`, `tui/utils/utils_test.go`
 
 **Acceptance criteria:**
 

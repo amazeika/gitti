@@ -1,7 +1,9 @@
 package i18n
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +26,29 @@ func TestEveryLocaleTranslatesEveryString(t *testing.T) {
 			if value.Field(i).String() == "" {
 				t.Errorf("%s is missing a translation for %s", name, value.Type().Field(i).Name)
 			}
+		}
+	}
+}
+
+func TestPushDiagnosticsFormatLabelsParseInEveryLocale(t *testing.T) {
+	locales := map[string]*LanguageMapping{
+		"en":      &eN,
+		"ja":      &jA,
+		"zh-hans": &zH_HANS,
+		"zh-hant": &zH_HANT,
+	}
+
+	// A broken %s/%d placeholder would render a visible %!x(MISSING) artefact
+	// inside the push popup for that locale's users.
+	for name, mapping := range locales {
+		if out := fmt.Sprintf(mapping.GitPushPopUpCouldNotStart, "cause"); strings.Contains(out, "%!") {
+			t.Errorf("%s GitPushPopUpCouldNotStart has a broken placeholder: %q", name, out)
+		}
+		if out := fmt.Sprintf(mapping.GitPushPopUpNonZeroExit, 1); strings.Contains(out, "%!") {
+			t.Errorf("%s GitPushPopUpNonZeroExit has a broken placeholder: %q", name, out)
+		}
+		if out := fmt.Sprintf(mapping.GitPushPopUpReadFailure, "cause"); strings.Contains(out, "%!") {
+			t.Errorf("%s GitPushPopUpReadFailure has a broken placeholder: %q", name, out)
 		}
 	}
 }

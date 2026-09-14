@@ -224,6 +224,20 @@ func ReinitCherryPickedCommitInfo(m *types.GittiModel) {
 
 // ------------------------------------
 //
+//	Build the terminal-interactive git command for a signing-required
+//	operation. workingDir pins the command to the repository Gitti is actively
+//	operating on so a worktree switch cannot leave the suspended process in a
+//	stale directory.
+//
+// ------------------------------------
+func buildGitSigningExecCmd(gitCommand []string, workingDir string) *exec.Cmd {
+	cmd := exec.Command("git", gitCommand...)
+	cmd.Dir = workingDir
+	return cmd
+}
+
+// ------------------------------------
+//
 //	Suspend the Gitti UI and hand control to a git command that requires GPG
 //	signing (e.g. signed commits/tags). Runs the command via tea.ExecProcess,
 //	captures stderr silently (no direct terminal passthrough), sanitizes it, and
@@ -231,7 +245,26 @@ func ReinitCherryPickedCommitInfo(m *types.GittiModel) {
 //
 // ------------------------------------
 func SuspendGittiUIForGitOperationRequireSigning(m *types.GittiModel, gitCommand []string, GitOperationOpsTypeForLogging string) (*types.GittiModel, tea.Cmd) {
-	cmd := exec.Command("git", gitCommand...)
+	cmd := buildGitSigningExecCmd(gitCommand, "")
+	var stderr bytes.Buffer
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+
+	m.GittiLogger.RegisterNewLog(GitOperationOpsTypeForLogging, strings.Join(gitCommand, " "), logging.INFO, "", true)
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return buildSigningFinishedMsg(GitOperationOpsTypeForLogging, err, sanitizeGitSigningStderr(strings.TrimSpace(stderr.String())))
+	})
+}
+
+// ------------------------------------
+//
+//	Suspend the Gitti UI and hand control to a git command that requires GPG
+//	signing, executing it in the given working directory (the active model
+//	repository path). Terminal output stays directly visible; the completion
+//	message carries the operation identity and success information.
+//
+// ------------------------------------
+func SuspendGittiUIForGitOperationRequireSigningWithWorkdir(m *types.GittiModel, gitCommand []string, workingDir string, GitOperationOpsTypeForLogging string) (*types.GittiModel, tea.Cmd) {
+	cmd := buildGitSigningExecCmd(gitCommand, workingDir)
 	var stderr bytes.Buffer
 	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
 

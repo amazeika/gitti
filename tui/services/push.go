@@ -21,21 +21,28 @@ func GitRemotePushService(m *types.GittiModel, remoteName string, pushType strin
 	if ok {
 		ctx, cancel := context.WithCancel(context.Background())
 		popUp.CancelFunc = cancel
+		// Capture this attempt's identity before the push starts so the
+		// result event can be matched against the active popup attempt
+		attemptID := pushPopUp.BeginGitRemotePushAttempt(popUp)
 		popUp.HasError.Store(false)
 		popUp.ProcessSuccess.Store(false)
 		popUp.IsProcessing.Store(true)
 		popUp.IsCancelled.Store(false)
+		// a new attempt must never display the command, status, or output
+		// retained from the previous one
+		pushPopUp.ResetGitRemotePushPopUpDiagnostics(popUp)
 
 		go func(ctx context.Context) {
 			defer cancel()
 
-			exitStatusCode := m.GitOperations.GitCommit.GitPush(ctx, remoteName, pushType, checkoutBranch)
-			data := types.GitPushResultEventDataStructure{
-				Success: exitStatusCode == 0,
-			}
+			result := m.GitOperations.GitCommit.GitPush(ctx, remoteName, pushType, checkoutBranch)
 			m.TuiUpdateChannel <- types.GittiTuiUpdateMsg{
 				Event: constant.GIT_PUSH_RESULT_EVENT,
-				Data:  data,
+				Data: types.GitPushResultEventDataStructure{
+					Success: result.Success(),
+					Result:  result,
+					Attempt: attemptID,
+				},
 			}
 		}(ctx)
 	}
@@ -59,7 +66,8 @@ func GitRemotePushCancelService(m *types.GittiModel) {
 	m.IsTyping.Store(false)                              // and reset typing mode
 	m.PopUpType = constant.NoPopUp
 	if ok {
-		popUp.GitRemotePushOutputViewport.SetContent("") // set the git commit output viewport to nothing
+		// a late result must not re-populate a popup the user already closed
+		pushPopUp.ResetGitRemotePushPopUpDiagnostics(popUp)
 		popUp.IsProcessing.Store(false)
 		popUp.HasError.Store(false)
 		popUp.ProcessSuccess.Store(false)
@@ -76,7 +84,7 @@ func InitGitRemotePushPopUpModelAndStartGitRemotePushService(m *types.GittiModel
 	if popUp, ok := m.PopUpModel.(*pushPopUp.GitRemotePushPopUpModel); !ok {
 		pushPopUp.InitGitRemotePushPopUpModel(m)
 	} else {
-		popUp.GitRemotePushOutputViewport.SetContent("")
+		pushPopUp.ResetGitRemotePushPopUpDiagnostics(popUp)
 	}
 	// then push it after init the git remote push pop up model
 	GitRemotePushService(m, remoteName, pushType)
