@@ -2,7 +2,7 @@
 status: in-progress
 issue: 7
 pr: null
-completed: [1, 2, 3]
+completed: [1, 2, 3, 4]
 ---
 
 # Reliable Push Result and State Refresh — Design Document
@@ -237,4 +237,8 @@ Both configured tracks ran with their configured models and efforts; there are n
 
 ## Outcome
 
-<!-- Build fills this after implementation, including the full-sweep result. Keep it brief. -->
+Issue #7 is delivered. Every background push now reports the actual process argv and working directory, explicit start/exit/cancellation/error state, and separately retained stdout and stderr while rejecting stale progress or results from earlier attempts. The shared argument builder preserves the existing normal, safe-force, dangerous-force, tracked, untracked, and signing command behavior.
+
+After a successful background or signed push, Gitti requests generation-bound reconciliation of local branches, upstream and ahead/behind state, remote branches, and Commit Log decorations. Each ticket requires post-request state passes, is independent of network fetch work, rejects stale worktree generations, and preserves last-good snapshots on read failure; the UI distinguishes a successful push from a subsequent refresh warning.
+
+There were no implementation deviations, deferred items, scope changes, or unresolved questions. The Full test sweep passed the repository's resolved test and application-build gates.
