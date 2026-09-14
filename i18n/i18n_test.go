@@ -50,6 +50,9 @@ func TestPushDiagnosticsFormatLabelsParseInEveryLocale(t *testing.T) {
 		if out := fmt.Sprintf(mapping.GitPushPopUpReadFailure, "cause"); strings.Contains(out, "%!") {
 			t.Errorf("%s GitPushPopUpReadFailure has a broken placeholder: %q", name, out)
 		}
+		if out := fmt.Sprintf(mapping.GitPushPopUpRefreshFailed, "branch (read failed)"); strings.Contains(out, "%!") {
+			t.Errorf("%s GitPushPopUpRefreshFailed has a broken placeholder: %q", name, out)
+		}
 	}
 }
 

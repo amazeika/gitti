@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -30,6 +31,9 @@ type GittiLogging struct {
 	maxLogsCount    int
 	updateChannel   chan string
 	showLatestXLogs int // this is used to control how many latest logs to show in the log component
+	// mu guards logs: daemon state passes and git operations log from
+	// multiple goroutines at the same time
+	mu sync.Mutex
 }
 
 // ------------------------------------
@@ -52,11 +56,17 @@ func InitGittiLogging(maxLogsCount int, updateChannel chan string, showLatestXLo
 //
 // ------------------------------------
 func (gl *GittiLogging) GetLogs() []LogItem {
+	gl.mu.Lock()
+	defer gl.mu.Unlock()
+	var selected []LogItem
 	if len(gl.logs) > gl.showLatestXLogs {
-		return gl.logs[len(gl.logs)-gl.showLatestXLogs-1:] // we get only the latest 3 log items
+		selected = gl.logs[len(gl.logs)-gl.showLatestXLogs-1:] // we get only the latest 3 log items
 	} else {
-		return gl.logs
+		selected = gl.logs
 	}
+	copied := make([]LogItem, len(selected))
+	copy(copied, selected)
+	return copied
 }
 
 // ------------------------------------
@@ -65,10 +75,16 @@ func (gl *GittiLogging) GetLogs() []LogItem {
 //
 // ------------------------------------
 func (gl *GittiLogging) GetFullLogs() []LogItem {
-	return gl.logs
+	gl.mu.Lock()
+	defer gl.mu.Unlock()
+	copied := make([]LogItem, len(gl.logs))
+	copy(copied, gl.logs)
+	return copied
 }
 
 func (gl *GittiLogging) ClearLogs() {
+	gl.mu.Lock()
+	defer gl.mu.Unlock()
 	gl.logs = make([]LogItem, 0, gl.maxLogsCount)
 }
 
@@ -88,11 +104,13 @@ func (gl *GittiLogging) RegisterNewLog(logOpsType string, logOpsCommand string, 
 		OpsSeverityLevel: logOpsSeverityLevel,
 		OpsDescription:   logOpsDescription,
 	}
+	gl.mu.Lock()
 	if len(gl.logs) < gl.maxLogsCount {
 		gl.logs = append(gl.logs, newLogItem)
 	} else {
 		gl.logs = append(gl.logs[1:], newLogItem)
 	}
+	gl.mu.Unlock()
 
 	gl.updateChannel <- NEW_LOG_UPDATE
 }

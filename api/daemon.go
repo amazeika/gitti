@@ -24,26 +24,42 @@ type GitDaemon struct {
 	debounceDur                         time.Duration
 	gitFilesActiveRefreshDur            time.Duration
 	gitRemoteSyncStatusActiveRefreshDur time.Duration
-	isGitBranchPassiveRunning           atomic.Bool
 	isGitFilesPassiveActiveRunning      atomic.Bool
-	isGitCommitLogPassiveRunning        atomic.Bool
 	isGitRefLogPassiveRunning           atomic.Bool
 	isGitStashPassiveRunning            atomic.Bool
-	isGitRemoteSyncStatusActiveRunning  atomic.Bool
 	isGitTagPassiveRunning              atomic.Bool
 	isGitRemotePassiveRunning           atomic.Bool
 	isGitWorktreePassiveRunning         atomic.Bool
-	watcherTimer                        *time.Timer
-	gitFilesActiveTimer                 *time.Timer
-	gitRemoteSyncStatusActiveTimer      *time.Timer
-	stopChannel                         chan struct{}
-	stopOnce                            sync.Once
-	errorLog                            []error
-	updateChannel                       chan string // to communicate back to main thread for an update event
-	daemonReceiverChannel               chan string // this is used to receive signal from main thread by the daemon
-	gitOperations                       atomic.Pointer[GitOperations]
-	allowCommitGraphWrite               bool
-	gittiLogger                         *logging.GittiLogging
+	isGitFetchRunning                   atomic.Bool
+	// branchStateDomain, remoteUpstreamStateDomain, and commitLogStateDomain
+	// are the three generation-aware state refresh domains affected by push;
+	// every other daemon domain keeps its existing passive running flag
+	branchStateDomain              stateRefreshDomain
+	remoteUpstreamStateDomain      stateRefreshDomain
+	commitLogStateDomain           stateRefreshDomain
+	watcherTimer                   *time.Timer
+	gitFilesActiveTimer            *time.Timer
+	gitRemoteSyncStatusActiveTimer *time.Timer
+	stopChannel                    chan struct{}
+	stopOnce                       sync.Once
+	errorLog                       []error
+	updateChannel                  chan string // to communicate back to main thread for an update event
+	daemonReceiverChannel          chan string // this is used to receive signal from main thread by the daemon
+	gitOperations                  atomic.Pointer[GitOperations]
+	allowCommitGraphWrite          bool
+	gittiLogger                    *logging.GittiLogging
+	postPushTicketsMu              sync.Mutex
+	postPushTickets                []*PostPushRefreshTicket
+	// stateBranchPassPreRead, stateRemoteUpstreamPassPreRead, and
+	// stateCommitLogPassPreRead are invoked by the daemon worker just before
+	// running each passive state pass, and stateFetchPreRead just before a
+	// network fetch starts; tests use them to hold a pass or fetch in flight.
+	// They are atomic because a test may install one while a worker from an
+	// earlier request is already looping.
+	stateBranchPassPreRead         atomic.Pointer[func()]
+	stateRemoteUpstreamPassPreRead atomic.Pointer[func()]
+	stateCommitLogPassPreRead      atomic.Pointer[func()]
+	stateFetchPreRead              atomic.Pointer[func()]
 }
 
 var GITDAEMON *GitDaemon
@@ -82,11 +98,12 @@ func InitGitDaemon(absoluteMainGitPath string, updateChannel chan string, gitOpe
 		allowCommitGraphWrite:               allowCommitGraphWrite,
 		gittiLogger:                         gittiLogger,
 	}
+	gd.branchStateDomain.name = statePassDomainBranch
+	gd.remoteUpstreamStateDomain.name = statePassDomainRemoteUpstream
+	gd.commitLogStateDomain.name = statePassDomainCommitLog
 	gd.gitOperations.Store(gitOperations)
 	gd.isGitFilesPassiveActiveRunning.Store(false)
-	gd.isGitRemoteSyncStatusActiveRunning.Store(false)
-	gd.isGitBranchPassiveRunning.Store(false)
-	gd.isGitCommitLogPassiveRunning.Store(false)
+	gd.isGitFetchRunning.Store(false)
 	gd.isGitRefLogPassiveRunning.Store(false)
 	gd.isGitStashPassiveRunning.Store(false)
 	gd.isGitTagPassiveRunning.Store(false)
@@ -101,13 +118,35 @@ func InitGitDaemon(absoluteMainGitPath string, updateChannel chan string, gitOpe
 
 // ------------------------------------
 //
-//	Swap the daemon's GitOperations reference, used after a worktree switch when a
+//	UpdateGitOperations swaps the daemon's GitOperations reference, used after a worktree switch when a
 //	fresh GitOperations (with re-resolved paths) is rebuilt. Mirrors how the cmd
 //	executor's repo dir is updated.
 //
 // ------------------------------------
 func (gd *GitDaemon) UpdateGitOperations(gitOperations *GitOperations) {
 	gd.gitOperations.Store(gitOperations)
+}
+
+// ------------------------------------
+//
+//	WaitStatePassesIdle blocks until no state pass worker or network fetch is
+//	in flight, or until the timeout elapses, reporting whether the daemon
+//	quiesced. It lets an embedded caller observe a settled daemon without
+//	racing the workers itself.
+//
+// ------------------------------------
+func (gd *GitDaemon) WaitStatePassesIdle(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !gd.isGitFetchRunning.Load() &&
+			!gd.branchStateDomain.isActive() &&
+			!gd.remoteUpstreamStateDomain.isActive() &&
+			!gd.commitLogStateDomain.isActive() {
+			return true
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return false
 }
 
 // ------------------------------------
@@ -214,29 +253,19 @@ func (gd *GitDaemon) Start() {
 			case <-gd.gitRemoteSyncStatusActiveTimer.C:
 				// reset immediately; git remote sync status operation
 				gd.gitRemoteSyncStatusActiveTimer.Reset(gd.gitRemoteSyncStatusActiveRefreshDur)
-				go func() {
-					if gd.isGitRemoteSyncStatusActiveRunning.CompareAndSwap(false, true) {
-						defer gd.isGitRemoteSyncStatusActiveRunning.Store(false)
-						gitOps := gd.gitOperations.Load()
-						gitOps.GitRemote.GetLatestRemoteSyncStatusAndUpstream(true, false)
-						gitOps.GitBranch.GetLatestRemoteBranchesInfo()
-						gd.updateChannel <- git.GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE
-					}
-				}()
+				// the timer keeps its existing policy: a background (non-user)
+				// network fetch plus a remote/upstream local state read; neither
+				// can drop the other behind a busy guard
+				gd.requestFetch(false)
+				gd.requestStatePass(&gd.remoteUpstreamStateDomain)
 			case signal := <-gd.daemonReceiverChannel:
 				switch signal {
 				case git.GIT_FETCH:
-					go func() {
-						if gd.isGitRemoteSyncStatusActiveRunning.CompareAndSwap(false, true) {
-							defer gd.isGitRemoteSyncStatusActiveRunning.Store(false)
-							gitOps := gd.gitOperations.Load()
-							gitOps.GitRemote.GetLatestRemoteSyncStatusAndUpstream(true, true)
-							gitOps.GitBranch.GetLatestRemoteBranchesInfo()
-							gd.updateChannel <- git.GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE
-						} else {
-							gd.gittiLogger.RegisterNewLog(logging.FETCH_OPS, "", logging.WARN, "[WARN]: A background process to fetch is already running", false)
-						}
-					}()
+					// the manual fetch keeps its existing policy: one fetch in
+					// flight at a time, a WARN when a user-triggered request is
+					// skipped, and the fetch's completion requests its own
+					// remote/upstream local state read
+					gd.requestFetch(true)
 				}
 			case <-gd.stopChannel:
 				gd.watcher.Close()
@@ -277,29 +306,16 @@ func (gd *GitDaemon) gitLatestInfoFetch(needFetch bool) {
 			gd.updateChannel <- git.GIT_STATE_UPDATE
 		}
 	}()
-	go func() {
-		if gd.isGitBranchPassiveRunning.CompareAndSwap(false, true) {
-			defer gd.isGitBranchPassiveRunning.Store(false)
-			gd.gitOperations.Load().GitBranch.GetLatestBranchesInfo()
-			gd.updateChannel <- git.GIT_BRANCH_UPDATE
-		}
-	}()
-	go func() {
-		if gd.isGitRemoteSyncStatusActiveRunning.CompareAndSwap(false, true) {
-			defer gd.isGitRemoteSyncStatusActiveRunning.Store(false)
-			gitOps := gd.gitOperations.Load()
-			gitOps.GitRemote.GetLatestRemoteSyncStatusAndUpstream(needFetch, false)
-			gitOps.GitBranch.GetLatestRemoteBranchesInfo()
-			gd.updateChannel <- git.GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE
-		}
-	}()
-	go func() {
-		if gd.isGitCommitLogPassiveRunning.CompareAndSwap(false, true) {
-			defer gd.isGitCommitLogPassiveRunning.Store(false)
-			gd.gitOperations.Load().GitCommitLog.GetCommitLogs()
-			gd.updateChannel <- git.GIT_COMMITLOG_UPDATE
-		}
-	}()
+	// the three push-affected state domains route through the generation-aware
+	// coordinator so a request coalesced into an in-flight pass still gets a
+	// pass that begins after it; the other domains keep their existing
+	// passive running flags
+	gd.requestStatePass(&gd.branchStateDomain)
+	if needFetch {
+		gd.requestFetch(false)
+	}
+	gd.requestStatePass(&gd.remoteUpstreamStateDomain)
+	gd.requestStatePass(&gd.commitLogStateDomain)
 	go func() {
 		if gd.isGitRefLogPassiveRunning.CompareAndSwap(false, true) {
 			defer gd.isGitRefLogPassiveRunning.Store(false)

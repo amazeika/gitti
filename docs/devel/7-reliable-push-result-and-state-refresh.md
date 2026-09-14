@@ -2,7 +2,7 @@
 status: in-progress
 issue: 7
 pr: null
-completed: [1]
+completed: [1, 2]
 ---
 
 # Reliable Push Result and State Refresh — Design Document
@@ -154,7 +154,7 @@ Argv and cwd are rendered as data and are never reparsed or passed through a she
 
 **ID:** `2`
 **Goal:** a successful push in the active worktree deterministically publishes post-push branch, upstream, ahead/behind, remote-branch, and Commit Log state
-**Tests:** pending
+**Tests:** `api/daemon_test.go`, `tui/services/push_service_test.go`, `tui/popup/push/push_test.go`, `i18n/i18n_test.go`
 
 **Acceptance criteria:**
 

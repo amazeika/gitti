@@ -20,7 +20,19 @@ import (
 // ------------------------------------
 func ResetGitRemotePushPopUpDiagnostics(popUp *GitRemotePushPopUpModel) {
 	popUp.LastPushResult = git.EmptyGitPushResult()
+	popUp.IsReconciling.Store(false)
 	popUp.GitRemotePushOutputViewport.SetContent("")
+}
+
+// ------------------------------------
+//
+//	Mark the popup's visible reconciliation stage: the zero-status push has
+//	finished and the final success is held until the post-push refresh ticket
+//	completes.
+//
+// ------------------------------------
+func MarkGitRemotePushPopUpReconciling(popUp *GitRemotePushPopUpModel) {
+	popUp.IsReconciling.Store(true)
 }
 
 // ------------------------------------
@@ -89,11 +101,14 @@ var pushAttemptIDCounter atomic.Int64
 
 // ------------------------------------
 //
-//	Begin a new push attempt: allocate the next process-wide attempt id,
-//	record it on the popup, and return it so the launching service can
-//	attach it to the result event. A result event carrying any other id is
-//	rejected by UpdateGitPushResultEvent, including ids allocated to
-//	attempts that ran on a different popup instance.
+//	Begin a new push attempt. It allocates the next process-wide attempt
+//	id, records it on the popup, and returns it so the launching service
+//	can attach it to the result event.
+//
+//	The process-wide allocation is what a reconstructed popup relies on: a
+//	result event carrying any other id, including ids allocated to attempts
+//	that ran on a different popup instance, is rejected by
+//	UpdateGitPushResultEvent.
 //
 // ------------------------------------
 func BeginGitRemotePushAttempt(popUp *GitRemotePushPopUpModel) int64 {
@@ -104,13 +119,16 @@ func BeginGitRemotePushAttempt(popUp *GitRemotePushPopUpModel) int64 {
 
 // ------------------------------------
 //
-//	Handle the async git push result event. Clears the IsProcessing flag and
-//	sets ProcessSuccess on success, or sets HasError on failure. Stores the
-//	definitive result and renders its deterministic diagnostics. No-ops if
-//	the popup is not the active push output popup, the operation was
-//	cancelled, or the event belongs to a different attempt, so a late result
-//	from a cancelled attempt never overwrites a newer push or reopens a
-//	closed popup.
+//	Handle the async git push result event. It clears the IsProcessing flag
+//	and sets ProcessSuccess on success, or sets HasError on failure. It
+//	stores the definitive result and renders its deterministic diagnostics,
+//	including the post-push reconciliation outcome when one was requested.
+//
+//	It no-ops if the popup is not the active push output popup, the
+//	operation was cancelled, or the event belongs to a different attempt.
+//
+//	A late result from a cancelled attempt therefore never overwrites a
+//	newer push or reopens a closed popup.
 //
 // ------------------------------------
 func UpdateGitPushResultEvent(m *types.GittiModel, data types.GitPushResultEventDataStructure) {
@@ -120,6 +138,7 @@ func UpdateGitPushResultEvent(m *types.GittiModel, data types.GitPushResultEvent
 	}
 
 	popUp.IsProcessing.Store(false)
+	popUp.IsReconciling.Store(false)
 	popUp.LastPushResult = data.Result
 	if data.Success {
 		popUp.HasError.Store(false)
@@ -128,6 +147,6 @@ func UpdateGitPushResultEvent(m *types.GittiModel, data types.GitPushResultEvent
 		popUp.HasError.Store(true)
 		popUp.ProcessSuccess.Store(false)
 	}
-	popUp.GitRemotePushOutputViewport.SetContent(buildGitRemotePushDiagnostics(data.Result))
+	popUp.GitRemotePushOutputViewport.SetContent(buildGitRemotePushDiagnostics(data.Result, data.Refresh))
 	popUp.GitRemotePushOutputViewport.PageDown()
 }

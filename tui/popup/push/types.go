@@ -99,16 +99,21 @@ type GitRemotePushPopUpModel struct {
 	HasError                    atomic.Bool    // indicate if git commit exitcode is not 0 (meaning have error)
 	ProcessSuccess              atomic.Bool    // has the process sucessfuly executed
 	IsCancelled                 atomic.Bool    // flag to indicate if the operation was cancelled by user
+	// IsReconciling indicates the zero-status push has finished and the popup
+	// is now waiting for the post-push refresh ticket; the popup stays open
+	// showing the reconciliation stage until the final result arrives
+	IsReconciling atomic.Bool
 	// CancelFunc is used to cancel the git push operation
 	CancelFunc context.CancelFunc
 	// LastPushResult is the deterministic diagnostics shown once the attempt
 	// finishes; it is cleared before every new attempt
 	LastPushResult git.GitPushResult
 	// ActivePushAttemptID identifies the push attempt the popup currently
-	// displays; attempt ids are allocated process-wide, so a reconstructed
+	// displays. Attempt ids are allocated process-wide, so a reconstructed
 	// popup can never be assigned an id an earlier instance's attempt
-	// already used, and a result event carrying any other attempt id is
-	// rejected so a late result from a cancelled attempt cannot overwrite a
-	// new push
+	// already used.
+	//
+	// A result event carrying any other attempt id is rejected, so a late
+	// result from a cancelled attempt cannot overwrite a new push.
 	ActivePushAttemptID atomic.Int64
 }

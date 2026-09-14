@@ -303,6 +303,10 @@ type LanguageMapping struct {
 	GitPushPopUpStdout               string
 	GitPushPopUpStderr               string
 	GitPushPopUpStreamEmpty          string
+	GitPushPopUpReconciling          string
+	GitPushPopUpPushSucceeded        string
+	GitPushPopUpRefreshSucceeded     string
+	GitPushPopUpRefreshFailed        string
 	// Choose Remote
 	ChooseRemoteTitle string
 	// Choose push option

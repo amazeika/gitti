@@ -18,7 +18,10 @@ import (
 //
 // ------------------------------------
 func InitGitCommitLogList(m *types.GittiModel) bool {
-	latestGitCommitLog := m.GitOperations.GitCommitLog.GitCommitLogOutput()
+	// one combined read keeps the history and the local branch names from
+	// the same published generation
+	latest := m.GitOperations.GitCommitLog.CommitLogSnapshot()
+	latestGitCommitLog := latest.Commits
 	latestGitCommitLogItemArray := make([]list.Item, 0, len(latestGitCommitLog))
 
 	// get the previous selected commit log and see if it was within the new list if yes get the latest position of the previous selected file
@@ -34,7 +37,7 @@ func InitGitCommitLogList(m *types.GittiModel) bool {
 	// commits; looking only at one row would incorrectly leave "origin/" expanded.
 	// The commit-log service captures canonical refs in the same refresh worker,
 	// avoiding stale branch snapshots and `git branch` worktree status markers.
-	knownLocalBranchNames := m.GitOperations.GitCommitLog.LocalBranchNames()
+	knownLocalBranchNames := latest.LocalBranchNames
 	localBranchNameSet := make(map[string]struct{}, len(knownLocalBranchNames))
 	for _, branchName := range knownLocalBranchNames {
 		localBranchNameSet[branchName] = struct{}{}

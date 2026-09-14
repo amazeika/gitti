@@ -28,7 +28,7 @@ func TestGitBranchPublishesCanonicalLinkedWorktreeState(t *testing.T) {
 	run("worktree", "add", "-q", filepath.Join(t.TempDir(), "linked worktree with spaces"), "feature")
 
 	gitBranch := branchUnderTest(t)
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 
 	snapshot := gitBranch.LocalBranchSnapshot()
 	if snapshot.CurrentCheckOut != (BranchInfo{BranchName: "master", IsCheckedOut: true}) {
@@ -50,7 +50,7 @@ func TestGitBranchClassifiesUnbornDetachedAndAttachedTransitions(t *testing.T) {
 	_, run := repositoryUnderTest(t)
 	gitBranch := branchUnderTest(t)
 
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 	if current := gitBranch.CurrentCheckOut(); current != (BranchInfo{BranchName: "master", IsCheckedOut: true}) || !gitBranch.IsRepoUnborn() {
 		t.Errorf("fresh repository published current=%#v unborn=%v, want unborn master", current, gitBranch.IsRepoUnborn())
 	}
@@ -58,7 +58,7 @@ func TestGitBranchClassifiesUnbornDetachedAndAttachedTransitions(t *testing.T) {
 	run("commit", "-q", "--allow-empty", "-m", "first")
 	run("branch", "feature")
 	run("switch", "-q", "--detach", "HEAD")
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 	if current := gitBranch.CurrentCheckOut(); current != (BranchInfo{}) || gitBranch.IsRepoUnborn() {
 		t.Errorf("detached repository published current=%#v unborn=%v, want no current", current, gitBranch.IsRepoUnborn())
 	}
@@ -67,13 +67,13 @@ func TestGitBranchClassifiesUnbornDetachedAndAttachedTransitions(t *testing.T) {
 	}
 
 	run("switch", "-q", "master")
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 	if current := gitBranch.CurrentCheckOut(); current != (BranchInfo{BranchName: "master", IsCheckedOut: true}) || gitBranch.IsRepoUnborn() {
 		t.Errorf("reattached repository published current=%#v unborn=%v, want attached master", current, gitBranch.IsRepoUnborn())
 	}
 
 	run("switch", "-q", "--orphan", "orphan")
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 	if current := gitBranch.CurrentCheckOut(); current != (BranchInfo{BranchName: "orphan", IsCheckedOut: true}) || !gitBranch.IsRepoUnborn() {
 		t.Errorf("orphan repository published current=%#v unborn=%v, want unborn orphan", current, gitBranch.IsRepoUnborn())
 	}
@@ -89,7 +89,7 @@ func TestGitBranchClassifiesUnbornHeadWithSameNamedTag(t *testing.T) {
 	run("switch", "-q", "--orphan", "orphan")
 
 	gitBranch := branchUnderTest(t)
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 
 	if current := gitBranch.CurrentCheckOut(); current != (BranchInfo{BranchName: "orphan", IsCheckedOut: true}) {
 		t.Errorf("current = %#v, want canonical unborn orphan", current)
@@ -107,7 +107,7 @@ func TestGitBranchKeepsLastGoodSnapshotAndDefendsReaders(t *testing.T) {
 	run("commit", "-q", "--allow-empty", "-m", "first")
 	run("branch", "feature")
 	gitBranch := branchUnderTest(t)
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 	good := gitBranch.LocalBranchSnapshot()
 
 	returned := gitBranch.AllBranches()
@@ -117,7 +117,7 @@ func TestGitBranchKeepsLastGoodSnapshotAndDefendsReaders(t *testing.T) {
 	}
 
 	executor.InitCmdExecutor(filepath.Join(t.TempDir(), "missing"))
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 	executor.InitCmdExecutor(root)
 	if after := gitBranch.LocalBranchSnapshot(); after.CurrentCheckOut != good.CurrentCheckOut || !slices.Equal(after.AllBranches, good.AllBranches) || after.IsRepoUnborn != good.IsRepoUnborn {
 		t.Errorf("failed refresh changed last-good snapshot from %#v to %#v", good, after)
@@ -126,7 +126,7 @@ func TestGitBranchKeepsLastGoodSnapshotAndDefendsReaders(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".git", "HEAD"), []byte("ref: \n"), 0o644); err != nil {
 		t.Fatalf("corrupting HEAD for symbolic-ref failure: %v", err)
 	}
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 	if after := gitBranch.LocalBranchSnapshot(); after.CurrentCheckOut != good.CurrentCheckOut || !slices.Equal(after.AllBranches, good.AllBranches) || after.IsRepoUnborn != good.IsRepoUnborn {
 		t.Errorf("symbolic-ref failure changed last-good snapshot from %#v to %#v", good, after)
 	}
@@ -137,7 +137,7 @@ func TestGitBranchConcurrentReadersObserveCompleteSnapshots(t *testing.T) {
 	run("commit", "-q", "--allow-empty", "-m", "first")
 	run("branch", "feature")
 	gitBranch := branchUnderTest(t)
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 
 	var waitGroup sync.WaitGroup
 	for range 8 {
@@ -158,7 +158,7 @@ func TestGitBranchConcurrentReadersObserveCompleteSnapshots(t *testing.T) {
 		go func() {
 			defer waitGroup.Done()
 			for range 5 {
-				gitBranch.GetLatestBranchesInfo()
+				gitBranch.GetLatestBranchesInfo(nil)
 			}
 		}()
 	}

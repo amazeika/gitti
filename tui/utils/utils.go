@@ -268,9 +268,15 @@ func SuspendGittiUIForGitOperationRequireSigningWithWorkdir(m *types.GittiModel,
 	var stderr bytes.Buffer
 	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
 
+	// Capture the worktree identity before suspension so the completion
+	// message can bind a post-push refresh ticket to the generation that
+	// ran the signing command
+	gitOperations := m.GitOperations
 	m.GittiLogger.RegisterNewLog(GitOperationOpsTypeForLogging, strings.Join(gitCommand, " "), logging.INFO, "", true)
 	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return buildSigningFinishedMsg(GitOperationOpsTypeForLogging, err, sanitizeGitSigningStderr(strings.TrimSpace(stderr.String())))
+		msg := buildSigningFinishedMsg(GitOperationOpsTypeForLogging, err, sanitizeGitSigningStderr(strings.TrimSpace(stderr.String())))
+		msg.GitOperations = gitOperations
+		return msg
 	})
 }
 

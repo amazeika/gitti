@@ -2,6 +2,7 @@ package push
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -546,5 +547,141 @@ exit 0
 	}
 	if secondPopUp.IsProcessing.Load() {
 		t.Error("the late result left the reconstructed popup processing")
+	}
+}
+
+// ------------------------------------
+//
+//	While a zero-status push waits for its post-push refresh ticket the popup
+//	remains open in the visible reconciliation stage instead of the plain
+//	processing text.
+//
+// ------------------------------------
+func TestReconcilingStageShowsTheRefreshStageText(t *testing.T) {
+	model, _, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+exit 0
+`)
+
+	popUp := model.PopUpModel.(*GitRemotePushPopUpModel)
+	popUp.IsProcessing.Store(true)
+	MarkGitRemotePushPopUpReconciling(popUp)
+
+	view := RenderGitRemotePushPopUp(model)
+	if !strings.Contains(view, i18n.LANGUAGEMAPPING.GitPushPopUpReconciling) {
+		t.Errorf("reconciling popup =\n%s\nmissing the reconciliation stage text", view)
+	}
+	if strings.Contains(view, i18n.LANGUAGEMAPPING.GitRemotePushPopUpProcessing) {
+		t.Errorf("reconciling popup still shows the plain processing text:\n%s", view)
+	}
+
+	// the final result ends the reconciliation stage
+	UpdateGitPushResultEvent(model, types.GitPushResultEventDataStructure{
+		Success: true,
+		Result:  gitapi.EmptyGitPushResult(),
+		Attempt: popUp.ActivePushAttemptID.Load(),
+		Refresh: &api.PostPushRefreshResult{Refreshed: true},
+	})
+	if popUp.IsReconciling.Load() {
+		t.Error("the final result did not end the reconciliation stage")
+	}
+}
+
+// ------------------------------------
+//
+//	A successful push plus a successful reconciliation renders the refresh
+//	success statement in the completed diagnostics.
+//
+// ------------------------------------
+func TestCompletedPopUpShowsReconciledRefreshOutcome(t *testing.T) {
+	model, gitCommit, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    rev-parse) echo "origin/master"; exit 0 ;;
+    push) exit 0 ;;
+  esac
+done
+exit 0
+`)
+
+	result := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	if !result.Success() {
+		t.Fatalf("the scripted push did not succeed: exit %d, err %v", result.ExitCode(), result.Err())
+	}
+
+	popUp := model.PopUpModel.(*GitRemotePushPopUpModel)
+	UpdateGitPushResultEvent(model, types.GitPushResultEventDataStructure{
+		Success: true,
+		Result:  result,
+		Attempt: popUp.ActivePushAttemptID.Load(),
+		Refresh: &api.PostPushRefreshResult{Refreshed: true},
+	})
+
+	if !popUp.ProcessSuccess.Load() || popUp.HasError.Load() {
+		t.Errorf("flags = success %v, error %v, want a successful push", popUp.ProcessSuccess.Load(), popUp.HasError.Load())
+	}
+	view := unpadView(popUp.GitRemotePushOutputViewport.View())
+	if !strings.Contains(view, i18n.LANGUAGEMAPPING.GitPushPopUpRefreshSucceeded) {
+		t.Errorf("completed popup =\n%s\nmissing the reconciled refresh statement", view)
+	}
+	if strings.Contains(view, i18n.LANGUAGEMAPPING.GitPushPopUpRefreshFailed[:10]) {
+		t.Errorf("completed popup shows a refresh warning for a successful reconciliation:\n%s", view)
+	}
+}
+
+// ------------------------------------
+//
+//	Git succeeded but the reconciliation failed: the popup keeps the success
+//	statement, adds a visible refresh warning naming the failed domains, and
+//	never relabels the successful push as failed.
+//
+// ------------------------------------
+func TestCompletedPopUpShowsRefreshWarningWithoutFailingThePush(t *testing.T) {
+	model, gitCommit, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    rev-parse) echo "origin/master"; exit 0 ;;
+    push) exit 0 ;;
+  esac
+done
+exit 0
+`)
+
+	result := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	if !result.Success() {
+		t.Fatalf("the scripted push did not succeed: exit %d, err %v", result.ExitCode(), result.Err())
+	}
+
+	popUp := model.PopUpModel.(*GitRemotePushPopUpModel)
+	UpdateGitPushResultEvent(model, types.GitPushResultEventDataStructure{
+		Success: true,
+		Result:  result,
+		Attempt: popUp.ActivePushAttemptID.Load(),
+		Refresh: &api.PostPushRefreshResult{
+			Refreshed:     false,
+			FailedDomains: []string{"branch", "commit log"},
+			Errors:        []error{errors.New("branch read failed"), errors.New("commit log read failed")},
+		},
+	})
+
+	// the push is still a success: green state, no error flag
+	if !popUp.ProcessSuccess.Load() || popUp.HasError.Load() {
+		t.Errorf("the refresh failure relabelled the successful push: success %v, error %v",
+			popUp.ProcessSuccess.Load(), popUp.HasError.Load())
+	}
+
+	view := unpadView(popUp.GitRemotePushOutputViewport.View())
+	if !strings.Contains(view, i18n.LANGUAGEMAPPING.GitPushPopUpPushSucceeded) {
+		t.Errorf("completed popup lost the push success statement:\n%s", view)
+	}
+	if strings.Contains(view, i18n.LANGUAGEMAPPING.GitPushPopUpRefreshSucceeded) {
+		t.Errorf("completed popup claims the state was reconciled:\n%s", view)
+	}
+	if !strings.Contains(view, i18n.LANGUAGEMAPPING.GitPushPopUpRefreshFailed[:10]) {
+		t.Errorf("completed popup missing the refresh warning:\n%s", view)
+	}
+	for _, domain := range []string{"branch", "commit log"} {
+		if !strings.Contains(view, domain) {
+			t.Errorf("refresh warning does not name the failed domain %q:\n%s", domain, view)
+		}
 	}
 }

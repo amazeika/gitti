@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gohyuhan/gitti/api"
 	"github.com/gohyuhan/gitti/api/git"
 	"github.com/gohyuhan/gitti/i18n"
 	"github.com/gohyuhan/gitti/tui/constant"
@@ -16,15 +17,17 @@ import (
 
 // ------------------------------------
 //
-//	Render the deterministic final diagnostics for a finished push attempt:
-//	working directory, one quoted argv element per line, an explicit exit
-//	status (integer, not started, or cancelled), and the separately retained
-//	stdout and stderr sections. Failed attempts additionally carry an
-//	actionable explanation; empty streams show an explicit marker rather than
-//	blank ambiguity.
+//	Render the deterministic final diagnostics for a finished push attempt.
+//	The sections are: the working directory, one quoted argv element per
+//	line, an explicit exit status (integer, not started, or cancelled), the
+//	separately retained stdout and stderr sections, and the post-push
+//	reconciliation outcome for a successful push.
+//
+//	Failed attempts additionally carry an actionable explanation. Empty
+//	streams show an explicit marker rather than blank ambiguity.
 //
 // ------------------------------------
-func buildGitRemotePushDiagnostics(result git.GitPushResult) string {
+func buildGitRemotePushDiagnostics(result git.GitPushResult, refresh *api.PostPushRefreshResult) string {
 	var diagnostics strings.Builder
 
 	diagnostics.WriteString(i18n.LANGUAGEMAPPING.GitPushPopUpWorkingDirectory)
@@ -67,6 +70,24 @@ func buildGitRemotePushDiagnostics(result git.GitPushResult) string {
 	writeGitPushOutputSection(&diagnostics, i18n.LANGUAGEMAPPING.GitPushPopUpStdout, result.Stdout())
 	diagnostics.WriteRune('\n')
 	writeGitPushOutputSection(&diagnostics, i18n.LANGUAGEMAPPING.GitPushPopUpStderr, result.Stderr())
+
+	// The post-push reconciliation outcome appears only when a ticket was
+	// requested, which happens only for a zero-status push. A refresh failure
+	// keeps the push-only success statement and adds a visible warning naming
+	// the failed domains; it never claims the state was reconciled and never
+	// relabels the successful Git push as failed.
+	if refresh != nil {
+		diagnostics.WriteRune('\n')
+		if refresh.Refreshed {
+			diagnostics.WriteString(i18n.LANGUAGEMAPPING.GitPushPopUpRefreshSucceeded)
+			diagnostics.WriteRune('\n')
+		} else {
+			diagnostics.WriteString(i18n.LANGUAGEMAPPING.GitPushPopUpPushSucceeded)
+			diagnostics.WriteRune('\n')
+			diagnostics.WriteString(fmt.Sprintf(i18n.LANGUAGEMAPPING.GitPushPopUpRefreshFailed, refresh.FailureSummary()))
+			diagnostics.WriteRune('\n')
+		}
+	}
 
 	return diagnostics.String()
 }
@@ -145,9 +166,15 @@ func RenderGitRemotePushPopUp(m *types.GittiModel) string {
 		logViewPort := logViewPortStyle.Render(popUp.GitRemotePushOutputViewport.View())
 
 		var content string
-		// Show spinner above viewport when processing
+		// Show spinner above viewport when processing; while the zero-status
+		// push waits for its post-push refresh ticket the popup shows the
+		// visible reconciliation stage instead of the plain processing text
 		if popUp.IsProcessing.Load() {
-			processingText := style.SpinnerStyle.Render(popUp.Spinner.View() + " " + i18n.LANGUAGEMAPPING.GitRemotePushPopUpProcessing)
+			stageText := i18n.LANGUAGEMAPPING.GitRemotePushPopUpProcessing
+			if popUp.IsReconciling.Load() {
+				stageText = i18n.LANGUAGEMAPPING.GitPushPopUpReconciling
+			}
+			processingText := style.SpinnerStyle.Render(popUp.Spinner.View() + " " + stageText)
 			content = lipgloss.JoinVertical(
 				lipgloss.Left,
 				title,
