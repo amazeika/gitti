@@ -2,7 +2,7 @@
 status: in-progress
 issue: 7
 pr: null
-completed: [1, 2]
+completed: [1, 2, 3]
 ---
 
 # Reliable Push Result and State Refresh — Design Document
