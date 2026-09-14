@@ -1,8 +1,8 @@
 ---
-status: in-progress
+status: shipped
 issue: 7
 pr: null
-completed: [1, 2, 3, 4]
+completed: [1, 2, 3, 4, 5]
 ---
 
 # Reliable Push Result and State Refresh — Design Document
@@ -242,3 +242,34 @@ Issue #7 is delivered. Every background push now reports the actual process argv
 After a successful background or signed push, Gitti requests generation-bound reconciliation of local branches, upstream and ahead/behind state, remote branches, and Commit Log decorations. Each ticket requires post-request state passes, is independent of network fetch work, rejects stale worktree generations, and preserves last-good snapshots on read failure; the UI distinguishes a successful push from a subsequent refresh warning.
 
 There were no implementation deviations, deferred items, scope changes, or unresolved questions. The Full test sweep passed the repository's resolved test and application-build gates.
+
+## Test Instructions
+
+### Manual verification
+
+1. In a linked worktree, create a tracked feature branch that is several fast-forward commits ahead
+   of its upstream, choose normal **Push**, and verify the popup shows the linked worktree path,
+   argument lines without a force option, exit status zero, and separate stdout and stderr.
+2. Wait for repository-state refresh to finish, then verify the branch is `0↑ 0↓` and the Commit Log
+   renders the local and matching remote tip together, such as `*feature/x^`.
+3. Reject a normal push and verify the popup remains red, reports the nonzero status and stderr, and
+   does not enter the success-only refresh stage.
+4. After a successful push, force a local state-read failure and verify the popup reports Git's
+   success separately from the refresh warning while the previous complete UI state remains visible.
+5. Repeat a successful push through the signed route and verify state refresh starts after the
+   terminal returns. Normal push remains the recovery path; no force push or fetch is required to
+   refresh the interface.
+
+### Automated verification
+
+Run the complete repository test suite and application build:
+
+```bash
+go test ./...
+go build -o ./bin/gitti .
+```
+
+The focused coverage is in `api/git/commit_test.go`, `api/daemon_test.go`,
+`api/git/refresh_snapshot_race_test.go`, `api/git/branch_test.go`,
+`api/git/commitlog_test.go`, `api/git/remote_test.go`, `tui/services/push_service_test.go`,
+`tui/popup/push/push_test.go`, `tui/utils/utils_test.go`, and `i18n/i18n_test.go`.

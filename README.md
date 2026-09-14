@@ -38,7 +38,7 @@ Gitti is built for terminal-focused developers who need visual Git operations wi
 - 📝 **Interactive Staging** - Visually select and stage files, including line-level staging and unstaging
 - 🔍 **Diff Viewer** - Review changes with syntax-aware diff display
 - 💬 **Commit Interface** - Write commits with a dedicated UI
-- 🚀 **Push/Pull Operations** - Manage remote operations seamlessly
+- 🚀 **Push/Pull Operations** - Manage remote operations with inspectable push results and automatic state refresh
 - 🔄 **Merge** - Merge branches with configurable fast-forward options and signing support
 - 💿 **Changes Stash Operations** - Manage stash operations seamlessly
 - 🔀 **Conflict Resolution** - Detect and resolve merge conflicts with interactive options
@@ -230,6 +230,22 @@ rewriting them as fully qualified refs.
 When `HEAD` is detached, the panel omits a synthetic current-branch row and continues to list the
 local branches. Gitti does not add a richer detached-HEAD label, and Git remains responsible for
 rejecting operations that are invalid because a branch is in use by another worktree.
+
+### Push results and refresh
+
+A completed background push shows the working directory, each Git argument, the exit status, and
+separate stdout and stderr. This makes failures such as rejected updates visible without treating
+the displayed arguments as a shell command.
+
+After Git accepts a push, Gitti displays a repository-state refresh stage before marking the
+operation fully successful. The refresh reloads the current branch and upstream, ahead/behind
+counts, remote branches, and Commit Log decorations from local Git state; it does not fetch. A
+normal fast-forward push is sufficient—do not force push to refresh the interface.
+
+If Git succeeds but this refresh fails, the popup reports the push as successful and shows a
+separate refresh warning. The remote update is not rolled back, and Gitti keeps the last complete
+state instead of replacing it with partial results. Signed pushes use the terminal for Git's
+interaction and request the same state refresh when the terminal returns.
 
 ### Screen modes
 
