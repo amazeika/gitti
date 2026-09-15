@@ -43,8 +43,24 @@ func InitModifiedFilesList(m *types.GittiModel) bool {
 	items, selectedFilesPosition = utils.FilterListItems(items, m.PanelFilterQuery[constant.ModifiedFilesComponentPanel], previousSelectedFile, selectedFilesPosition)
 
 	previousModifiedFilesCount := len(m.CurrentRepoModifiedFilesInfoList.Items())
+	// A refresh replaces the list model, but it must not replace the geometry that
+	// the layout already assigned to it. In particular, focused mode sizes this
+	// list to the full main area while ModifiedFilesComponentPanelHeight retains
+	// the stack-mode height for when the user leaves focused mode. Reconstructing
+	// from that field briefly rendered a short list (and its help footer) until an
+	// asynchronous detail update triggered another layout pass. The outer panel
+	// width has the same problem in two-column mode: list content is two columns
+	// narrower because of the border.
+	listWidth := m.CurrentRepoModifiedFilesInfoList.Width()
+	listHeight := m.CurrentRepoModifiedFilesInfoList.Height()
+	if listWidth <= 0 {
+		listWidth = max(0, m.WindowLeftPanelWidth-2)
+	}
+	if listHeight <= 0 {
+		listHeight = max(0, m.ModifiedFilesComponentPanelHeight)
+	}
 
-	m.CurrentRepoModifiedFilesInfoList = list.New(items, GitModifiedFilesItemDelegate{}, m.WindowLeftPanelWidth, m.ModifiedFilesComponentPanelHeight)
+	m.CurrentRepoModifiedFilesInfoList = list.New(items, GitModifiedFilesItemDelegate{}, listWidth, listHeight)
 	m.CurrentRepoModifiedFilesInfoList.SetShowPagination(false)
 	m.CurrentRepoModifiedFilesInfoList.SetShowStatusBar(false)
 	m.CurrentRepoModifiedFilesInfoList.SetFilteringEnabled(false)
