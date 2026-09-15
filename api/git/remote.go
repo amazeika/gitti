@@ -5,23 +5,42 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gohyuhan/gitti/executor"
 	"github.com/gohyuhan/gitti/i18n"
 	"github.com/gohyuhan/gitti/logging"
 )
 
-type GitRemote struct {
-	updateChannel                 chan string
-	gitProcessLock                *GitProcessLock
-	remote                        []GitRemoteInfo // all remote info
-	fetchRemote                   []GitRemoteInfo // if the url is for fetch
-	pushRemote                    []GitRemoteInfo // if the url is for push
+// remoteSyncSnapshot is one immutable generation of the remote/upstream
+// local-read state: the ahead/behind counts, the upstream identity, and its
+// icon. GetLatestRemoteSyncStatusAndUpstream assembles the fresh state in
+// local variables and publishes it with one store, so a reader sees either
+// the whole prior generation or the whole new one.
+type remoteSyncSnapshot struct {
 	remoteSyncStatus              RemoteSyncStatus
 	upStreamRemoteIcon            string
 	currentBranchUpStream         string
 	currentBranchUpStreamWithIcon string
-	logging                       *logging.GittiLogging
+}
+
+// RemoteSyncUpstreamSnapshot is one published generation of the
+// remote/upstream state, returned by the combined getter so a reader never
+// mixes the upstream identity, icon, and counts from two passes.
+type RemoteSyncUpstreamSnapshot struct {
+	RemoteSyncStatus      RemoteSyncStatus
+	UpStreamRemoteIcon    string
+	CurrentBranchUpStream string
+}
+
+type GitRemote struct {
+	updateChannel  chan string
+	gitProcessLock *GitProcessLock
+	remote         []GitRemoteInfo // all remote info
+	fetchRemote    []GitRemoteInfo // if the url is for fetch
+	pushRemote     []GitRemoteInfo // if the url is for push
+	remoteSync     atomic.Pointer[remoteSyncSnapshot]
+	logging        *logging.GittiLogging
 }
 
 type GitRemoteInfo struct {
@@ -43,15 +62,12 @@ type RemoteSyncStatus struct {
 // ------------------------------------
 func InitGitRemote(updateChannel chan string, gitProcessLock *GitProcessLock, logging *logging.GittiLogging) *GitRemote {
 	gitRemote := GitRemote{
-		updateChannel:                 updateChannel,
-		gitProcessLock:                gitProcessLock,
-		remote:                        []GitRemoteInfo{},
-		remoteSyncStatus:              RemoteSyncStatus{},
-		upStreamRemoteIcon:            "",
-		currentBranchUpStream:         "",
-		currentBranchUpStreamWithIcon: "",
-		logging:                       logging,
+		updateChannel:  updateChannel,
+		gitProcessLock: gitProcessLock,
+		remote:         []GitRemoteInfo{},
+		logging:        logging,
 	}
+	gitRemote.remoteSync.Store(&remoteSyncSnapshot{})
 
 	return &gitRemote
 }
@@ -89,7 +105,7 @@ func (gr *GitRemote) PushRemote() []GitRemoteInfo {
 //
 // ------------------------------------
 func (gr *GitRemote) RemoteSyncStatus() RemoteSyncStatus {
-	return gr.remoteSyncStatus
+	return gr.remoteSync.Load().remoteSyncStatus
 }
 
 // ------------------------------------
@@ -98,7 +114,7 @@ func (gr *GitRemote) RemoteSyncStatus() RemoteSyncStatus {
 //
 // ------------------------------------
 func (gr *GitRemote) UpStreamRemoteIcon() string {
-	return gr.upStreamRemoteIcon
+	return gr.remoteSync.Load().upStreamRemoteIcon
 }
 
 // ------------------------------------
@@ -107,7 +123,22 @@ func (gr *GitRemote) UpStreamRemoteIcon() string {
 //
 // ------------------------------------
 func (gr *GitRemote) CurrentBranchUpStream() string {
-	return gr.currentBranchUpStream
+	return gr.remoteSync.Load().currentBranchUpStream
+}
+
+// ------------------------------------
+//
+//	Return the remote sync status, upstream icon, and upstream name from one
+//	published generation
+//
+// ------------------------------------
+func (gr *GitRemote) RemoteSyncStatusAndUpstream() RemoteSyncUpstreamSnapshot {
+	snapshot := gr.remoteSync.Load()
+	return RemoteSyncUpstreamSnapshot{
+		RemoteSyncStatus:      snapshot.remoteSyncStatus,
+		UpStreamRemoteIcon:    snapshot.upStreamRemoteIcon,
+		CurrentBranchUpStream: snapshot.currentBranchUpStream,
+	}
 }
 
 // ------------------------------------
@@ -336,38 +367,71 @@ func (gr *GitRemote) CheckRemoteExist(passiveRunning bool) bool {
 
 // ------------------------------------
 //
-//	Related to Git Remote sync status and upstream, will be call by system
+//	Related to Git Remote sync status and upstream, will be call by system.
+//	This is the local read of the remote/upstream state domain: upstream
+//	identity plus the ahead/behind counts. It performs no network I/O; the
+//	fetch coordinator in the daemon schedules fetches separately, and a
+//	completed fetch requests its own later pass of this read.
+//
+//	The fresh state is assembled in local variables and stored in one
+//	publication after publishGuard passes, so the upstream identity is never
+//	stored before the ahead/behind parse succeeds. A verified absent-upstream
+//	state publishes cleared upstream and counts. A failed read returns an
+//	error and keeps the last good snapshot.
 //
 // ------------------------------------
-func (gr *GitRemote) GetLatestRemoteSyncStatusAndUpstream(needFetch bool, userTriggered bool) {
-	upstreamIcon, upstream, _ := hasUpstreamWithIcon()
-	gr.upStreamRemoteIcon = upstreamIcon
-	gr.currentBranchUpStream = upstream
+func (gr *GitRemote) GetLatestRemoteSyncStatusAndUpstream(publishGuard PublishGuard) error {
+	upstreamIcon, upstream, upstreamExists := hasUpstreamWithIcon()
 
-	if needFetch {
-		gitFetch(gr.logging, userTriggered)
+	var syncStatus RemoteSyncStatus
+	if upstreamExists {
+		gitArgs := []string{"rev-list", "--left-right", "--count", "HEAD...@{upstream}"}
+
+		remoteSyncStatusCmd := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
+		remoteSyncStatusOutput, remoteSyncStatusErr := remoteSyncStatusCmd.Output()
+		if remoteSyncStatusErr != nil {
+			gr.logging.RegisterNewLog(logging.CHECK_REMOTE_SYNC_STATUS_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.CHECK_REMOTE_SYNC_STATUS_OPS, remoteSyncStatusErr.Error()), true)
+			return remoteSyncStatusErr
+		}
+
+		parsedOutput := strings.TrimSpace(string(remoteSyncStatusOutput))
+		parts := strings.Fields(parsedOutput)
+
+		if len(parts) < 2 {
+			gr.logging.RegisterNewLog(logging.CHECK_REMOTE_SYNC_STATUS_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: Invalid output format", logging.CHECK_REMOTE_SYNC_STATUS_OPS), true)
+			return fmt.Errorf("remote sync status: invalid output format")
+		}
+
+		syncStatus = RemoteSyncStatus{
+			Local:  parts[0],
+			Remote: parts[1],
+		}
 	}
 
-	gitArgs := []string{"rev-list", "--left-right", "--count", "HEAD...@{upstream}"}
-
-	remoteSyncStatusCmd := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
-	remoteSyncStatusOutput, remoteSyncStatusErr := remoteSyncStatusCmd.Output()
-	if remoteSyncStatusErr != nil {
-		gr.remoteSyncStatus = RemoteSyncStatus{}
-		return
+	if publishGuard != nil {
+		if err := publishGuard(); err != nil {
+			return err
+		}
 	}
+	gr.remoteSync.Store(&remoteSyncSnapshot{
+		remoteSyncStatus:              syncStatus,
+		upStreamRemoteIcon:            upstreamIcon,
+		currentBranchUpStream:         upstream,
+		currentBranchUpStreamWithIcon: "",
+	})
+	return nil
+}
 
-	parsedOutput := strings.TrimSpace(string(remoteSyncStatusOutput))
-	parts := strings.Fields(parsedOutput)
-
-	if len(parts) < 2 {
-		gr.logging.RegisterNewLog(logging.CHECK_REMOTE_SYNC_STATUS_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: Invalid output format", logging.CHECK_REMOTE_SYNC_STATUS_OPS), true)
-		gr.remoteSyncStatus = RemoteSyncStatus{}
-		return
-	}
-
-	gr.remoteSyncStatus = RemoteSyncStatus{
-		Local:  parts[0],
-		Remote: parts[1],
-	}
+// ------------------------------------
+//
+//	Related to Git Fetch. This is the network fetch of the fetch coordinator.
+//	It fetches and prunes all remotes with the existing fetch policy.
+//
+//	Only a user-triggered fetch logs its start and its failure. The fetch
+//	publishes no remote state itself; the caller decides what to refresh
+//	after it finishes.
+//
+// ------------------------------------
+func (gr *GitRemote) GitFetch(userTriggered bool) {
+	gitFetch(gr.logging, userTriggered)
 }

@@ -47,7 +47,7 @@ func TestMergeChooserPreservesLinkedDecorationAndDiscoveryOrder(t *testing.T) {
 	t.Cleanup(func() { executor.GittiCmdExecutor = originalExecutor })
 	executor.InitCmdExecutor(root)
 	gitBranch := gitapi.InitGitBranch(nil, false, logging.InitGittiLogging(8, make(chan string, 16), 3))
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 	model := &types.GittiModel{
 		Width:         100,
 		GitOperations: &api.GitOperations{GitBranch: gitBranch},

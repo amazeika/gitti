@@ -177,7 +177,9 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 				if selectedOption != nil {
 					if m.GitPushRequireSigning && !settings.GITTICONFIGSETTINGS.OverrideSigningUISuspend {
 						gitArgs := m.GitOperations.GitCommit.GitPushWithSigning(popUp.RemoteName, selectedOption.(pushPopUp.GitPushOptionItem).PushType, m.CheckOutBranch)
-						return utils.SuspendGittiUIForGitOperationRequireSigning(m, gitArgs, logging.GIT_PUSH_WITH_SIGNING_OPS)
+						// execute in the active model repository path so the suspended
+						// push tracks the selected worktree rather than the launch directory
+						return utils.SuspendGittiUIForGitOperationRequireSigningWithWorkdir(m, gitArgs, m.RepoPath, logging.GIT_PUSH_WITH_SIGNING_OPS)
 					} else {
 						m.PopUpType = constant.GitRemotePushPopUp
 						m.ShowPopUp.Store(true)

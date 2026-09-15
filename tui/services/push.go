@@ -2,8 +2,11 @@ package services
 
 import (
 	"context"
+	"fmt"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/gohyuhan/gitti/api"
+	"github.com/gohyuhan/gitti/logging"
 	"github.com/gohyuhan/gitti/tui/constant"
 	pushPopUp "github.com/gohyuhan/gitti/tui/popup/push"
 	"github.com/gohyuhan/gitti/tui/types"
@@ -21,21 +24,60 @@ func GitRemotePushService(m *types.GittiModel, remoteName string, pushType strin
 	if ok {
 		ctx, cancel := context.WithCancel(context.Background())
 		popUp.CancelFunc = cancel
+		// Capture this attempt's identity before the push starts so the
+		// result event can be matched against the active popup attempt
+		attemptID := pushPopUp.BeginGitRemotePushAttempt(popUp)
 		popUp.HasError.Store(false)
 		popUp.ProcessSuccess.Store(false)
 		popUp.IsProcessing.Store(true)
 		popUp.IsCancelled.Store(false)
+		// a new attempt must never display the command, status, or output
+		// retained from the previous one
+		pushPopUp.ResetGitRemotePushPopUpDiagnostics(popUp)
+
+		// Capture this attempt's worktree identity before the push starts so
+		// the reconciliation ticket binds to the generation that executed the
+		// push, not to one selected after it finished
+		gitOperations := m.GitOperations
 
 		go func(ctx context.Context) {
 			defer cancel()
 
-			exitStatusCode := m.GitOperations.GitCommit.GitPush(ctx, remoteName, pushType, checkoutBranch)
-			data := types.GitPushResultEventDataStructure{
-				Success: exitStatusCode == 0,
+			result := gitOperations.GitCommit.GitPush(ctx, remoteName, pushType, checkoutBranch)
+			if !result.Success() {
+				// A failed, unstarted, or cancelled push publishes its final
+				// result and never requests the success-only reconciliation
+				// ticket
+				m.TuiUpdateChannel <- types.GittiTuiUpdateMsg{
+					Event: constant.GIT_PUSH_RESULT_EVENT,
+					Data: types.GitPushResultEventDataStructure{
+						Success: result.Success(),
+						Result:  result,
+						Attempt: attemptID,
+					},
+				}
+				return
+			}
+
+			// A zero-status push enters the visible reconciliation stage; its
+			// final success is published only after the post-push refresh
+			// ticket completes. The reconciliation performs no fetch and never
+			// waits for one
+			pushPopUp.MarkGitRemotePushPopUpReconciling(popUp)
+			var refresh *api.PostPushRefreshResult
+			if api.GITDAEMON != nil {
+				ticket := api.GITDAEMON.RequestPostPushRefresh(gitOperations)
+				refreshed := ticket.Await()
+				refresh = &refreshed
 			}
 			m.TuiUpdateChannel <- types.GittiTuiUpdateMsg{
 				Event: constant.GIT_PUSH_RESULT_EVENT,
-				Data:  data,
+				Data: types.GitPushResultEventDataStructure{
+					Success: true,
+					Result:  result,
+					Attempt: attemptID,
+					Refresh: refresh,
+				},
 			}
 		}(ctx)
 	}
@@ -59,7 +101,8 @@ func GitRemotePushCancelService(m *types.GittiModel) {
 	m.IsTyping.Store(false)                              // and reset typing mode
 	m.PopUpType = constant.NoPopUp
 	if ok {
-		popUp.GitRemotePushOutputViewport.SetContent("") // set the git commit output viewport to nothing
+		// a late result must not re-populate a popup the user already closed
+		pushPopUp.ResetGitRemotePushPopUpDiagnostics(popUp)
 		popUp.IsProcessing.Store(false)
 		popUp.HasError.Store(false)
 		popUp.ProcessSuccess.Store(false)
@@ -76,7 +119,7 @@ func InitGitRemotePushPopUpModelAndStartGitRemotePushService(m *types.GittiModel
 	if popUp, ok := m.PopUpModel.(*pushPopUp.GitRemotePushPopUpModel); !ok {
 		pushPopUp.InitGitRemotePushPopUpModel(m)
 	} else {
-		popUp.GitRemotePushOutputViewport.SetContent("")
+		pushPopUp.ResetGitRemotePushPopUpDiagnostics(popUp)
 	}
 	// then push it after init the git remote push pop up model
 	GitRemotePushService(m, remoteName, pushType)
@@ -85,4 +128,38 @@ func InitGitRemotePushPopUpModelAndStartGitRemotePushService(m *types.GittiModel
 		return m, pushPopup.Spinner.Tick
 	}
 	return m, nil
+}
+
+// ------------------------------------
+//
+//	RequestPostPushRefreshForSignedPush requests the same post-push
+//	reconciliation a zero-status background push gets, for the successful
+//	terminal-interactive signing push route. The completion message carries
+//	the operation identity and success information: only a successful signing
+//	push requests the ticket. Any reconciliation failure is logged because no
+//	push popup remains after the terminal resumes.
+//
+// ------------------------------------
+func RequestPostPushRefreshForSignedPush(m *types.GittiModel, msg types.GitOperationRequiredSigningFinishedMsg) {
+	if msg.GitOperationOpsTypeForLogging != logging.GIT_PUSH_WITH_SIGNING_OPS || msg.Err != nil {
+		return
+	}
+	if api.GITDAEMON == nil {
+		return
+	}
+	// The completion message carries the identity of the worktree that ran
+	// the signing command, captured when the suspension was built; fall back
+	// to the model's current operations when it does not
+	gitOperations := m.GitOperations
+	if msg.GitOperations != nil {
+		gitOperations = msg.GitOperations
+	}
+	ticket := api.GITDAEMON.RequestPostPushRefresh(gitOperations)
+	go func() {
+		result := ticket.Await()
+		if !result.Refreshed {
+			m.GittiLogger.RegisterNewLog(logging.GIT_PUSH_WITH_SIGNING_OPS, "", logging.WARN,
+				fmt.Sprintf("[WARN]: post-push state refresh failed after signing push: %s", result.FailureSummary()), false)
+		}
+	}()
 }

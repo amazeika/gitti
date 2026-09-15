@@ -152,4 +152,10 @@ type EditorFinishedMsg struct {
 type GitOperationRequiredSigningFinishedMsg struct {
 	GitOperationOpsTypeForLogging string // for logging purpose
 	Err                           error
+	// GitOperations is the daemon Git-operations generation the signing
+	// command executed against, captured when the suspension was built so
+	// the completion handler can bind a post-push refresh ticket to the
+	// worktree that ran the push; nil for signing routes that do not carry
+	// it
+	GitOperations *api.GitOperations
 }

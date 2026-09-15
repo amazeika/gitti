@@ -311,7 +311,7 @@ func TestGetCommitLogsAttachesRefsToEachCommit(t *testing.T) {
 	run("commit", "-q", "--allow-empty", "-m", "second")
 
 	gitCommitLog, gittiLogging := commitLogUnderTest(t, false)
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 
 	commits := gitCommitLog.GitCommitLogOutput()
 	if len(commits) != 2 {
@@ -337,7 +337,7 @@ func TestGetCommitLogsIsQuietOnAnUnbornHead(t *testing.T) {
 	repositoryUnderTest(t)
 
 	gitCommitLog, gittiLogging := commitLogUnderTest(t, false)
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 
 	if commits := gitCommitLog.GitCommitLogOutput(); len(commits) != 0 {
 		t.Errorf("read %d commits from a repository with none", len(commits))
@@ -352,7 +352,7 @@ func TestGetCommitLogsKeepsTheLastGoodHistoryWhenTheReadFails(t *testing.T) {
 	run("commit", "-q", "--allow-empty", "-m", "first")
 
 	gitCommitLog, gittiLogging := commitLogUnderTest(t, false)
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 
 	good := gitCommitLog.GitCommitLogOutput()
 	if len(good) != 1 {
@@ -368,7 +368,7 @@ func TestGetCommitLogsKeepsTheLastGoodHistoryWhenTheReadFails(t *testing.T) {
 	}
 	run("commit", "-q", "--allow-empty", "-F", subject)
 
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 
 	after := gitCommitLog.GitCommitLogOutput()
 	if len(after) != len(good) || (len(after) > 0 && after[0].Hash != good[0].Hash) {
@@ -387,7 +387,7 @@ func TestGetCommitLogsCapturesCanonicalLocalBranchNames(t *testing.T) {
 	run("worktree", "add", "-q", linkedWorktree, "feature")
 
 	gitCommitLog, gittiLogging := commitLogUnderTest(t, false)
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 
 	branchNames := gitCommitLog.LocalBranchNames()
 	if !slices.Contains(branchNames, "master") || !slices.Contains(branchNames, "feature") {
@@ -409,13 +409,13 @@ func TestGetCommitLogsClearsDeletedLocalBranchNames(t *testing.T) {
 	run("branch", "temporary")
 
 	gitCommitLog, _ := commitLogUnderTest(t, false)
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 	if !slices.Contains(gitCommitLog.LocalBranchNames(), "temporary") {
 		t.Fatal("initial local branch snapshot does not contain temporary")
 	}
 
 	run("branch", "-D", "temporary")
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 	if slices.Contains(gitCommitLog.LocalBranchNames(), "temporary") {
 		t.Errorf("LocalBranchNames = %v after deletion, want no stale temporary branch", gitCommitLog.LocalBranchNames())
 	}
@@ -431,7 +431,7 @@ func TestGetCommitLogsCompactsRemoteTipWhenLocalBranchIsAhead(t *testing.T) {
 	run("branch", "-D", "master")
 
 	gitCommitLog, _ := commitLogUnderTest(t, false)
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 
 	for _, commit := range gitCommitLog.GitCommitLogOutput() {
 		if commit.Message == "shared" {
@@ -452,7 +452,7 @@ func TestGetCommitLogsWalksOnlyHeadWhenAllBranchesIsOff(t *testing.T) {
 	run("switch", "-q", "master")
 
 	gitCommitLog, _ := commitLogUnderTest(t, false)
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 
 	commits := gitCommitLog.GitCommitLogOutput()
 	if len(commits) != 1 {
@@ -475,7 +475,7 @@ func TestGetCommitLogsIncludesIncomingUpstreamCommits(t *testing.T) {
 	run("branch", "-D", "incoming")
 
 	gitCommitLog, gittiLogging := commitLogUnderTest(t, false)
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 
 	commits := gitCommitLog.GitCommitLogOutput()
 	if len(commits) != 2 {
@@ -498,7 +498,7 @@ func TestGetCommitLogsDoesNotRequireAnUpstreamOnDetachedHead(t *testing.T) {
 	run("switch", "-q", "--detach", "HEAD")
 
 	gitCommitLog, gittiLogging := commitLogUnderTest(t, false)
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 
 	commits := gitCommitLog.GitCommitLogOutput()
 	if len(commits) != 1 || commits[0].Message != "first" {
@@ -517,7 +517,7 @@ func TestGetCommitLogsWalksEveryBranchWhenAllBranchesIsOn(t *testing.T) {
 	run("switch", "-q", "master")
 
 	gitCommitLog, _ := commitLogUnderTest(t, true)
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 
 	commits := gitCommitLog.GitCommitLogOutput()
 	if len(commits) != 2 {
@@ -540,7 +540,7 @@ func TestGetCommitLogsExcludesStashAndNotesInBothModes(t *testing.T) {
 		run("stash", "-q")
 
 		gitCommitLog, _ := commitLogUnderTest(t, allBranches)
-		gitCommitLog.GetCommitLogs()
+		gitCommitLog.GetCommitLogs(nil)
 
 		for _, commit := range gitCommitLog.GitCommitLogOutput() {
 			if strings.Contains(commit.Message, "WIP on") || strings.Contains(commit.Message, "index on") ||
@@ -557,7 +557,7 @@ func TestGetCommitLogsWalksTheBranchesOfAnUnbornHead(t *testing.T) {
 	run("switch", "-q", "--orphan", "unborn")
 
 	gitCommitLog, gittiLogging := commitLogUnderTest(t, true)
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 
 	// HEAD points at a branch with no commits, but the other branches are intact
 	// and must still produce rows.
@@ -574,7 +574,7 @@ func TestGetCommitLogsIsQuietOnAnEmptyRepositoryInAllBranchesMode(t *testing.T) 
 	repositoryUnderTest(t)
 
 	gitCommitLog, gittiLogging := commitLogUnderTest(t, true)
-	gitCommitLog.GetCommitLogs()
+	gitCommitLog.GetCommitLogs(nil)
 
 	if commits := gitCommitLog.GitCommitLogOutput(); len(commits) != 0 {
 		t.Errorf("read %d commits from an empty repository", len(commits))

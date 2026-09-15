@@ -2,6 +2,7 @@ package types
 
 import (
 	"charm.land/bubbles/v2/list"
+	"github.com/gohyuhan/gitti/api"
 	"github.com/gohyuhan/gitti/api/git"
 )
 
@@ -77,6 +78,15 @@ type GitRebaseResultEventDataStructure struct {
 
 type GitPushResultEventDataStructure struct {
 	Success bool
+	Result  git.GitPushResult
+	// Attempt identifies the push attempt that produced the result; the
+	// popup rejects events for any attempt it is not displaying
+	Attempt int64
+	// Refresh carries the post-push reconciliation outcome for a successful
+	// push; the final success event is published only after that ticket
+	// completes. It is nil for failed, unstarted, and cancelled pushes, which
+	// never request a ticket
+	Refresh *api.PostPushRefreshResult
 }
 
 type GitCommitResultEventDataStructure struct {

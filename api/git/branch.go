@@ -33,7 +33,7 @@ type LocalBranchSnapshot struct {
 
 type GitBranch struct {
 	localSnapshot  atomic.Pointer[branchSnapshot]
-	remoteBranches []BranchInfo
+	remoteBranches atomic.Pointer[[]BranchInfo]
 	logging        *logging.GittiLogging
 	gitProcessLock *GitProcessLock
 	FfMerge        bool // determine when merge it was fast forward or not, fast forward will not have the merge commit and non fast forward will have one
@@ -51,6 +51,7 @@ func InitGitBranch(gitProcessLock *GitProcessLock, ffMerge bool, logging *loggin
 		FfMerge:        ffMerge,
 	}
 	gitBranch.localSnapshot.Store(&branchSnapshot{allBranches: []BranchInfo{}})
+	gitBranch.remoteBranches.Store(&[]BranchInfo{})
 	return &gitBranch
 }
 
@@ -98,8 +99,9 @@ func copyBranchInfos(branches []BranchInfo) []BranchInfo {
 //
 // ------------------------------------
 func (gb *GitBranch) RemoteBranches() []BranchInfo {
-	copied := make([]BranchInfo, len(gb.remoteBranches))
-	copy(copied, gb.remoteBranches)
+	branches := gb.remoteBranches.Load()
+	copied := make([]BranchInfo, len(*branches))
+	copy(copied, *branches)
 	return copied
 }
 
@@ -117,19 +119,32 @@ func (gb *GitBranch) IsRepoUnborn() bool {
 //		Retrieve Branches Info
 //	 * Passive, this should only be trigger by system
 //
+//	The snapshot is assembled in local variables and stored in one
+//	publication after publishGuard passes.
+//
+//	A failed read or a stale worktree generation therefore preserves the
+//	last good state instead, and the error lets the daemon's state pass
+//	report the failure rather than silently publishing nothing.
+//
 // ------------------------------------
-func (gb *GitBranch) GetLatestBranchesInfo() {
+func (gb *GitBranch) GetLatestBranchesInfo(publishGuard PublishGuard) error {
 	localRefs, err := discoverLocalRefs()
 	if err != nil {
 		gb.logBranchRefreshFailure([]string{"for-each-ref", "refs/heads/"}, err)
-		return
+		return err
 	}
 
 	snapshot, err := gb.classifyLocalRefs(localRefs)
 	if err != nil {
-		return
+		return err
+	}
+	if publishGuard != nil {
+		if err := publishGuard(); err != nil {
+			return err
+		}
 	}
 	gb.localSnapshot.Store(snapshot)
+	return nil
 }
 
 func (gb *GitBranch) classifyLocalRefs(localRefs []localRefInfo) (*branchSnapshot, error) {
@@ -418,8 +433,12 @@ func (gb *GitBranch) DeleteLocalBranch(branchName string) ([]string, bool) {
 //		Related to get remote branch
 //	 * this run passively and will not be triggered by user manually, this will be trigger after passive and manual git fetch
 //
+//	The parsed list is stored only after publishGuard passes, so a failed
+//	read or a stale worktree generation preserves the last good remote
+//	branch list.
+//
 // ------------------------------------
-func (gb *GitBranch) GetLatestRemoteBranchesInfo() {
+func (gb *GitBranch) GetLatestRemoteBranchesInfo(publishGuard PublishGuard) error {
 	gitArgs := []string{"branch", "-r"}
 	remoteBranchExecutor := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
 	remoteBranchOutput, remoteBranchErr := remoteBranchExecutor.CombinedOutput()
@@ -429,7 +448,7 @@ func (gb *GitBranch) GetLatestRemoteBranchesInfo() {
 	var remoteBranches []BranchInfo
 	if remoteBranchErr != nil {
 		gb.logging.RegisterNewLog(logging.RETRIEVE_LATEST_REMOTE_BRANCH_INFO, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.RETRIEVE_LATEST_REMOTE_BRANCH_INFO, remoteBranchErr.Error()), true)
-		return
+		return remoteBranchErr
 	}
 
 	for _, parsedRemote := range parsedRemoteBranchOutput {
@@ -444,7 +463,13 @@ func (gb *GitBranch) GetLatestRemoteBranchesInfo() {
 		remoteBranches = append(remoteBranches, remoteBranch)
 	}
 
-	gb.remoteBranches = remoteBranches
+	if publishGuard != nil {
+		if err := publishGuard(); err != nil {
+			return err
+		}
+	}
+	gb.remoteBranches.Store(&remoteBranches)
+	return nil
 }
 
 // ------------------------------------

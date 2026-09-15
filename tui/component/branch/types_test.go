@@ -78,7 +78,7 @@ func TestInitBranchListUsesOneSnapshotAndConditionalCurrentOffset(t *testing.T) 
 	t.Cleanup(func() { executor.GittiCmdExecutor = originalExecutor })
 	executor.InitCmdExecutor(root)
 	gitBranch := gitapi.InitGitBranch(nil, false, logging.InitGittiLogging(8, make(chan string, 16), 3))
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 	previousList := list.New([]list.Item{GitBranchItem{BranchName: "feature"}}, GitBranchItemDelegate{}, 80, 10)
 	model := branchListModel(gitBranch, previousList)
 
@@ -91,7 +91,7 @@ func TestInitBranchListUsesOneSnapshotAndConditionalCurrentOffset(t *testing.T) 
 	}
 
 	runGit("switch", "-q", "--detach", "HEAD")
-	gitBranch.GetLatestBranchesInfo()
+	gitBranch.GetLatestBranchesInfo(nil)
 	InitBranchList(model)
 	if got := branchListNames(model.CurrentRepoBranchesInfoList.Items()); strings.Join(got, ",") != "feature,master" {
 		t.Errorf("detached list = %v, want all refs without a blank current row", got)

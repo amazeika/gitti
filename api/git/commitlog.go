@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/gohyuhan/gitti/executor"
@@ -35,14 +36,31 @@ type CommitLog struct {
 	ColorID      int
 }
 
+// commitLogSnapshot is one immutable generation of commit log state: the
+// rendered history plus the canonical local branch names captured with it.
+// GetCommitLogs assembles both in local variables and publishes them with
+// one store, so a reader never mixes the history and the branch names from
+// two passes.
+type commitLogSnapshot struct {
+	commitLogOutput  []CommitLog
+	localBranchNames []string
+}
+
+// CommitLogSnapshot is one published generation of commit log state, returned
+// by the combined getter so the history and its local branch names come from
+// the same pass.
+type CommitLogSnapshot struct {
+	Commits          []CommitLog
+	LocalBranchNames []string
+}
+
 type GitCommitLog struct {
-	gitCommitLogOutput []CommitLog
-	localBranchNames   []string
-	updateChannel      chan string
-	maxCommitLogCount  string
-	allBranches        bool
-	gitProcessLock     *GitProcessLock
-	logging            *logging.GittiLogging
+	commitLog         atomic.Pointer[commitLogSnapshot]
+	updateChannel     chan string
+	maxCommitLogCount string
+	allBranches       bool
+	gitProcessLock    *GitProcessLock
+	logging           *logging.GittiLogging
 }
 
 type CommitHashParentInfo struct {
@@ -59,13 +77,13 @@ type CommitHashParentInfo struct {
 func InitGitCommitLog(updateChannel chan string, gitProcessLock *GitProcessLock, maxCommitLogCountInt int, allBranches bool, logging *logging.GittiLogging) *GitCommitLog {
 	maxCommitLogCount := strconv.Itoa(maxCommitLogCountInt)
 	gitCommitLog := GitCommitLog{
-		gitCommitLogOutput: make([]CommitLog, 0),
-		gitProcessLock:     gitProcessLock,
-		updateChannel:      updateChannel,
-		maxCommitLogCount:  maxCommitLogCount,
-		allBranches:        allBranches,
-		logging:            logging,
+		gitProcessLock:    gitProcessLock,
+		updateChannel:     updateChannel,
+		maxCommitLogCount: maxCommitLogCount,
+		allBranches:       allBranches,
+		logging:           logging,
 	}
+	gitCommitLog.commitLog.Store(&commitLogSnapshot{commitLogOutput: make([]CommitLog, 0)})
 	return &gitCommitLog
 }
 
@@ -75,8 +93,9 @@ func InitGitCommitLog(updateChannel chan string, gitProcessLock *GitProcessLock,
 //
 // ------------------------------------
 func (gCL *GitCommitLog) GitCommitLogOutput() []CommitLog {
-	copied := make([]CommitLog, len(gCL.gitCommitLogOutput))
-	copy(copied, gCL.gitCommitLogOutput)
+	snapshot := gCL.commitLog.Load()
+	copied := make([]CommitLog, len(snapshot.commitLogOutput))
+	copy(copied, snapshot.commitLogOutput)
 	return copied
 }
 
@@ -87,17 +106,39 @@ func (gCL *GitCommitLog) GitCommitLogOutput() []CommitLog {
 //
 // ------------------------------------
 func (gCL *GitCommitLog) LocalBranchNames() []string {
-	copied := make([]string, len(gCL.localBranchNames))
-	copy(copied, gCL.localBranchNames)
+	snapshot := gCL.commitLog.Load()
+	copied := make([]string, len(snapshot.localBranchNames))
+	copy(copied, snapshot.localBranchNames)
 	return copied
+}
+
+// ------------------------------------
+//
+//	Return the commit log output and the local branch names captured with
+//	it, from one published generation
+//
+// ------------------------------------
+func (gCL *GitCommitLog) CommitLogSnapshot() CommitLogSnapshot {
+	snapshot := gCL.commitLog.Load()
+	commits := make([]CommitLog, len(snapshot.commitLogOutput))
+	copy(commits, snapshot.commitLogOutput)
+	names := make([]string, len(snapshot.localBranchNames))
+	copy(names, snapshot.localBranchNames)
+	return CommitLogSnapshot{Commits: commits, LocalBranchNames: names}
 }
 
 // ------------------------------------
 //
 //	Get the Commit log
 //
+//	The history is only published as one complete read: a scan or wait
+//	failure returns an error and keeps the last good graph rather than
+//	installing a truncated one. publishGuard is checked immediately before
+//	the publication so a stale worktree generation aborts the pass without
+//	touching the stored state.
+//
 // ------------------------------------
-func (gCL *GitCommitLog) GetCommitLogs() {
+func (gCL *GitCommitLog) GetCommitLogs(publishGuard PublishGuard) error {
 	// 1. Prepare git command
 	includeUpstream := !gCL.allBranches && commitLogHasUpstream()
 	gitArgs := buildCommitLogArgs(gCL.maxCommitLogCount, gCL.allBranches, includeUpstream)
@@ -107,12 +148,12 @@ func (gCL *GitCommitLog) GetCommitLogs() {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		gCL.logging.RegisterNewLog(logging.COMMIT_LOG_OPS, "", logging.ERROR, fmt.Sprintf("[PIPE ERROR]: %s", err.Error()), false)
-		return
+		return err
 	}
 
 	if err := cmd.Start(); err != nil {
 		gCL.logging.RegisterNewLog(logging.COMMIT_LOG_OPS, "", logging.ERROR, fmt.Sprintf("[START ERROR]: %s", err.Error()), false)
-		return
+		return err
 	}
 
 	// 2. Process commits
@@ -135,7 +176,10 @@ func (gCL *GitCommitLog) GetCommitLogs() {
 	// a truncated history would silently present a failed refresh as the whole
 	// repository; keeping the last good graph is the honest failure.
 	if scanErr != nil || waitErr != nil {
-		return
+		if scanErr != nil {
+			return scanErr
+		}
+		return waitErr
 	}
 
 	// Capture local refs in this worker rather than borrowing GitBranch state.
@@ -149,8 +193,16 @@ func (gCL *GitCommitLog) GetCommitLogs() {
 		localBranchNames = nil
 	}
 
-	gCL.gitCommitLogOutput = gitCommitLogOutput
-	gCL.localBranchNames = localBranchNames
+	if publishGuard != nil {
+		if err := publishGuard(); err != nil {
+			return err
+		}
+	}
+	gCL.commitLog.Store(&commitLogSnapshot{
+		commitLogOutput:  gitCommitLogOutput,
+		localBranchNames: localBranchNames,
+	})
+	return nil
 }
 
 // ------------------------------------

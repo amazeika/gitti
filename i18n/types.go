@@ -289,9 +289,24 @@ type LanguageMapping struct {
 	AddRemotePopUpRemoteAddSuccess       string
 	AddRemotePopUpInvalidRemoteUrlFormat string
 	// git push
-	GitRemotePushPopUpTitle      string
-	GitRemotePushPopUpProcessing string
-	GitRemotePushOptionTitle     string
+	GitRemotePushPopUpTitle          string
+	GitRemotePushPopUpProcessing     string
+	GitRemotePushOptionTitle         string
+	GitPushPopUpWorkingDirectory     string
+	GitPushPopUpArgv                 string
+	GitPushPopUpExitStatus           string
+	GitPushPopUpExitStatusNotStarted string
+	GitPushPopUpExitStatusCancelled  string
+	GitPushPopUpCouldNotStart        string
+	GitPushPopUpNonZeroExit          string
+	GitPushPopUpReadFailure          string
+	GitPushPopUpStdout               string
+	GitPushPopUpStderr               string
+	GitPushPopUpStreamEmpty          string
+	GitPushPopUpReconciling          string
+	GitPushPopUpPushSucceeded        string
+	GitPushPopUpRefreshSucceeded     string
+	GitPushPopUpRefreshFailed        string
 	// Choose Remote
 	ChooseRemoteTitle string
 	// Choose push option

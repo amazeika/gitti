@@ -160,6 +160,10 @@ func (gAM *GittiAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case types.EditorFinishedMsg:
 		return gAM, nil
 	case types.GitOperationRequiredSigningFinishedMsg:
+		// A successful signing-required push requests the same post-push
+		// reconciliation as the background route; any reconciliation failure
+		// is logged because no push popup remains after the terminal resumes
+		services.RequestPostPushRefreshForSignedPush(m, msg)
 		if msg.Err != nil {
 			m.GittiLogger.RegisterNewLog(msg.GitOperationOpsTypeForLogging, "", logging.ERROR, fmt.Sprintf("[%s ERROR] %s", msg.GitOperationOpsTypeForLogging, msg.Err.Error()), false)
 			if msg.GitOperationOpsTypeForLogging != logging.COMMIT_WITH_SIGNING_OPS && msg.GitOperationOpsTypeForLogging != logging.AMEND_COMMIT_WITH_SIGNING_OPS {
@@ -209,14 +213,13 @@ func (gAM *GittiAppModel) View() tea.View {
 // ------------------------------------
 func (gAM *GittiAppModel) updateGitRemoteStatusSyncLineStringAndUpStream() {
 	m := gAM.model
-	// set branch upstream
-	m.TrackedUpstreamOrBranchIcon = m.GitOperations.GitRemote.UpStreamRemoteIcon()
-	m.BranchUpStream = m.GitOperations.GitRemote.CurrentBranchUpStream()
-
-	// set remote sync status
-	remoteSynsStatusInfo := m.GitOperations.GitRemote.RemoteSyncStatus()
-	m.RemoteSyncLocalState = remoteSynsStatusInfo.Local
-	m.RemoteSyncRemoteState = remoteSynsStatusInfo.Remote
+	// one combined read keeps the icon, upstream, and counts from a single
+	// published generation
+	snapshot := m.GitOperations.GitRemote.RemoteSyncStatusAndUpstream()
+	m.TrackedUpstreamOrBranchIcon = snapshot.UpStreamRemoteIcon
+	m.BranchUpStream = snapshot.CurrentBranchUpStream
+	m.RemoteSyncLocalState = snapshot.RemoteSyncStatus.Local
+	m.RemoteSyncRemoteState = snapshot.RemoteSyncStatus.Remote
 }
 
 // ------------------------------------
