@@ -2,7 +2,7 @@
 status: in-progress
 issue: 8
 pr: null
-completed: [1, 2, 3]
+completed: [1, 2, 3, 4]
 ---
 
 # Local-Only Branch Status and Publishing — Design Document
@@ -222,4 +222,8 @@ The final advisory identified option-like remote-name injection, ambiguous and r
 
 ## Outcome
 
-<!-- Build fills this after implementation, including the full-sweep result. Keep it brief. -->
+Issue #8 is delivered. Remote synchronization now uses a typed, branch-bound observation that distinguishes tracked, local-only, pending, non-applicable, and unavailable states. The status panel renders those states with localized, width-safe labels and never treats a failed or stale upstream read as permission to publish.
+
+Pressing `p` on a matching local-only branch now opens a normal publish-only flow. Remote inventory is read atomically by configured name, multiple destinations require confirmation, and execution revalidates the worktree generation, branch, upstream state, remote, and working directory before running `git push --progress --set-upstream <remote> HEAD`. Successful publication reuses the existing no-fetch reconciliation ticket; tracked branches retain their normal and force-push choices.
+
+There were no implementation deviations, additional design decisions, scope changes, or unresolved questions. Deferred review follow-up is limited to disambiguating a branch from a same-named tag during count resolution, suppressing a stale upstream icon during branch transitions, and clearing popup state when only fetch-capable remotes exist. The Full test sweep passed `go test ./...`.
