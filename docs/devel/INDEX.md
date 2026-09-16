@@ -4,6 +4,8 @@ Specifications for in-flight and shipped work.
 
 ## In progress
 
+- [Local-Only Branch Status and Publishing](8-local-only-branch-status-and-publishing.md) — issue [#8](https://github.com/amazeika/gitti/issues/8)
+
 ## Draft
 
 - [Compact Commit Log ref decorations](_draft-compact-commit-log-refs.md) — supersedes one
