@@ -259,13 +259,16 @@ type UpstreamObservation struct {
 //	refs, so a concurrent checkout cannot mix another branch's upstream or
 //	counts into the published observation.
 //
+//	Every command runs through the given command executor so the whole pass
+//	is pinned to one worktree generation's directory.
+//
 // ------------------------------------
-func resolveUpstreamObservation(gittiLogger *logging.GittiLogging) (UpstreamObservation, error) {
+func resolveUpstreamObservation(cmdExecutor *executor.CmdExecutor, gittiLogger *logging.GittiLogging) (UpstreamObservation, error) {
 	checkoutBranchGitArgs := []string{"rev-parse", "--abbrev-ref", "HEAD"}
-	checkoutBranchOutput, checkoutBranchErr := executor.GittiCmdExecutor.RunGitCmd(checkoutBranchGitArgs, false).Output()
+	checkoutBranchOutput, checkoutBranchErr := cmdExecutor.RunGitCmd(checkoutBranchGitArgs, false).Output()
 	if checkoutBranchErr != nil {
 		symbolicRefGitArgs := []string{"symbolic-ref", "--quiet", "--short", "HEAD"}
-		symbolicRefOutput, symbolicRefErr := executor.GittiCmdExecutor.RunGitCmd(symbolicRefGitArgs, false).Output()
+		symbolicRefOutput, symbolicRefErr := cmdExecutor.RunGitCmd(symbolicRefGitArgs, false).Output()
 		if symbolicRefErr != nil {
 			return unavailableUpstreamObservation(gittiLogger, checkoutBranchGitArgs, checkoutBranchErr)
 		}
@@ -286,7 +289,7 @@ func resolveUpstreamObservation(gittiLogger *logging.GittiLogging) (UpstreamObse
 		return unavailableUpstreamObservation(gittiLogger, checkoutBranchGitArgs, fmt.Errorf("rev-parse --abbrev-ref HEAD returned no branch"))
 	}
 
-	configured, configuredErr := branchHasConfiguredUpstream(branchName)
+	configured, configuredErr := branchHasConfiguredUpstream(cmdExecutor, branchName)
 	if configuredErr != nil {
 		return unavailableUpstreamObservation(gittiLogger, []string{"config", "--get", fmt.Sprintf("branch.%s.remote", branchName)}, configuredErr)
 	}
@@ -294,12 +297,12 @@ func resolveUpstreamObservation(gittiLogger *logging.GittiLogging) (UpstreamObse
 		return UpstreamObservation{State: UpstreamStateUnpublished, Branch: branchName}, nil
 	}
 
-	upStream, upStreamErr := resolveUpStreamForBranch(branchName)
+	upStream, upStreamErr := resolveUpStreamForBranch(cmdExecutor, branchName)
 	if upStreamErr != nil {
 		return unavailableUpstreamObservation(gittiLogger, []string{"rev-parse", "--abbrev-ref", branchName + "@{upstream}"}, upStreamErr)
 	}
 
-	local, remote, countsErr := remoteSyncCountsAgainstUpstream(branchName)
+	local, remote, countsErr := remoteSyncCountsAgainstUpstream(cmdExecutor, branchName)
 	if countsErr != nil {
 		return unavailableUpstreamObservation(gittiLogger, []string{"rev-list", "--left-right", "--count", branchName + "..." + branchName + "@{upstream}"}, countsErr)
 	}
@@ -321,10 +324,10 @@ func resolveUpstreamObservation(gittiLogger *logging.GittiLogging) (UpstreamObse
 //	observation pinned to it when HEAD moves during the read.
 //
 // ------------------------------------
-func resolveUpStreamForBranch(branchName string) (string, error) {
+func resolveUpStreamForBranch(cmdExecutor *executor.CmdExecutor, branchName string) (string, error) {
 	gitArgs := []string{"rev-parse", "--abbrev-ref", branchName + "@{upstream}"}
 
-	checkUpStreamCmdExecutor := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
+	checkUpStreamCmdExecutor := cmdExecutor.RunGitCmd(gitArgs, false)
 	checkUpStreamOutput, checkUpStreamErr := checkUpStreamCmdExecutor.Output()
 	if checkUpStreamErr != nil {
 		return "", checkUpStreamErr
@@ -352,9 +355,9 @@ func unavailableUpstreamObservation(gittiLogger *logging.GittiLogging, gitArgs [
 //	failure is a failed inspection and is returned as an error.
 //
 // ------------------------------------
-func branchHasConfiguredUpstream(branchName string) (bool, error) {
+func branchHasConfiguredUpstream(cmdExecutor *executor.CmdExecutor, branchName string) (bool, error) {
 	gitArgs := []string{"config", "--get", fmt.Sprintf("branch.%s.remote", branchName)}
-	cmd := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
+	cmd := cmdExecutor.RunGitCmd(gitArgs, false)
 	output, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -375,9 +378,9 @@ func branchHasConfiguredUpstream(branchName string) (bool, error) {
 //	failure is an error rather than a cleared payload.
 //
 // ------------------------------------
-func remoteSyncCountsAgainstUpstream(branchName string) (string, string, error) {
+func remoteSyncCountsAgainstUpstream(cmdExecutor *executor.CmdExecutor, branchName string) (string, string, error) {
 	gitArgs := []string{"rev-list", "--left-right", "--count", branchName + "..." + branchName + "@{upstream}"}
-	output, err := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false).Output()
+	output, err := cmdExecutor.RunGitCmd(gitArgs, false).Output()
 	if err != nil {
 		return "", "", err
 	}

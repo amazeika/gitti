@@ -34,6 +34,7 @@ type GitCommit struct {
 	gitPushResultMu           sync.RWMutex
 	updateChannel             chan string
 	gitProcessLock            *GitProcessLock
+	cmdExecutor               *executor.CmdExecutor // generation executor bound to the captured worktree
 	logging                   *logging.GittiLogging
 	// gitPushDrainPreRead, when set, is invoked by each push output stream
 	// reader before its first read; tests use it to hold the readers until
@@ -48,16 +49,19 @@ type LatestCommitMsgAndDesc struct {
 
 // ------------------------------------
 //
-//	Initialize the git commit handler with shared dependencies
+//	Initialize the git commit handler with shared dependencies. The command
+//	executor is the generation's scoped executor so the push routes run in
+//	the captured worktree.
 //
 // ------------------------------------
-func InitGitCommit(updateChannel chan string, gitProcessLock *GitProcessLock, logging *logging.GittiLogging) *GitCommit {
+func InitGitCommit(updateChannel chan string, gitProcessLock *GitProcessLock, cmdExecutor *executor.CmdExecutor, logging *logging.GittiLogging) *GitCommit {
 	gitCommit := GitCommit{
 		gitCommitOutput:          []string{},
 		gitRemotePushStdoutLines: []string{},
 		gitRemotePushStderrLines: []string{},
 		updateChannel:            updateChannel,
 		gitProcessLock:           gitProcessLock,
+		cmdExecutor:              cmdExecutor,
 		logging:                  logging,
 	}
 
@@ -398,6 +402,141 @@ func buildPushGitArgs(originName string, pushType string, currentCheckOutBranch 
 
 // ------------------------------------
 //
+//	buildPublishGitArgs builds the argv for the first push of an
+//	unpublished branch. The branch is still unpublished, so --set-upstream
+//	persists the branch-to-remote association; the source is pinned to HEAD
+//	so the push publishes exactly the confirmed branch's tip. A publish
+//	never carries a force flag.
+//
+// ------------------------------------
+func buildPublishGitArgs(remoteName string) []string {
+	return []string{"push", "--progress", "--set-upstream", remoteName, "HEAD"}
+}
+
+// ------------------------------------
+//
+//	confirmPushRemoteIsConfigured verifies through the generation executor
+//	that the confirmed remote name still names a configured remote with a
+//	URL, so a remote removed between the confirmation and the launch is
+//	refused before any process starts instead of failing as a started push
+//
+// ------------------------------------
+func (gc *GitCommit) confirmPushRemoteIsConfigured(remoteName string) error {
+	cmd := gc.cmdExecutor.RunGitCmd([]string{"remote", "get-url", remoteName}, false)
+	if _, err := cmd.Output(); err != nil {
+		return fmt.Errorf("the push remote %q is not a configured remote with a URL", remoteName)
+	}
+	return nil
+}
+
+// ------------------------------------
+//
+//	prepareGitPush validates the confirmed route and builds its argv, shared
+//	by the background route and the signing-required route.
+//
+//	The remote name is validated against argument-injection shapes before
+//	any git state is read.
+//
+//	For a publish intent, the validation runs in order. The configured
+//	remote check confirms the name still names a remote with a URL. The
+//	upstream observation is re-resolved through the generation executor and
+//	must still name the route's captured branch.
+//
+//	A still-unpublished branch publishes with --set-upstream. A branch that
+//	gained its upstream since the confirmation proceeds as a normal push
+//	without --set-upstream. Any other unsettled or unreadable state refuses
+//	to start.
+//
+//	For a push intent, the same re-observation applies. A tracked branch
+//	pushes without the -u flag, and an unpublished branch keeps the existing
+//	semantics with the -u flag. Any other unsettled or unreadable state
+//	refuses to start.
+//
+//	A nil error means the process may start with the returned argv. Any
+//	error is an unstarted, actionable refusal.
+//
+// ------------------------------------
+func (gc *GitCommit) prepareGitPush(route GitPushRoute) ([]string, error) {
+	if gc.cmdExecutor == nil {
+		return nil, errors.New("the push route has no worktree-bound command executor")
+	}
+	if route.RemoteName == "" || strings.HasPrefix(route.RemoteName, "-") {
+		return nil, fmt.Errorf("the push remote name %q is not safe to use as a push argument", route.RemoteName)
+	}
+
+	switch route.Intent {
+	case PushIntentPublish:
+		if err := gc.confirmPushRemoteIsConfigured(route.RemoteName); err != nil {
+			return nil, err
+		}
+		observation, observationErr := resolveUpstreamObservation(gc.cmdExecutor, gc.logging)
+		if observationErr != nil {
+			return nil, fmt.Errorf("the branch state could not be re-read before the publish: %w", observationErr)
+		}
+		if observation.Branch != route.Branch {
+			return nil, fmt.Errorf("the checked-out branch changed from %q to %q before the publish", route.Branch, observation.Branch)
+		}
+		switch observation.State {
+		case UpstreamStateUnpublished:
+			return buildPublishGitArgs(route.RemoteName), nil
+		case UpstreamStateTracked:
+			// the branch gained its upstream since the confirmation: a
+			// normal push without --set-upstream
+			return buildPushGitArgs(route.RemoteName, route.PushType, route.Branch, true), nil
+		case UpstreamStateNotApplicable:
+			return nil, errors.New("there is no publishable branch: the head is detached or has no commit")
+		default:
+			// pending or unavailable: the state has not settled, and a
+			// first push must never start from an unsettled read
+			return nil, errors.New("the branch state has not settled, so the publish was not started")
+		}
+	case PushIntentPush:
+		// the tracked push re-reads the branch state through the generation
+		// executor for the same reasons the publish does: a branch that lost
+		// its upstream since the confirmation still pushes without -u, a
+		// switched head is refused instead of pushing the wrong ref, and an
+		// unreadable observation is an unstarted refusal
+		observation, observationErr := resolveUpstreamObservation(gc.cmdExecutor, gc.logging)
+		if observationErr != nil {
+			return nil, fmt.Errorf("the branch state could not be re-read before the push: %w", observationErr)
+		}
+		if observation.Branch != route.Branch {
+			return nil, fmt.Errorf("the checked-out branch changed from %q to %q before the push", route.Branch, observation.Branch)
+		}
+		switch observation.State {
+		case UpstreamStateTracked:
+			return buildPushGitArgs(route.RemoteName, route.PushType, route.Branch, true), nil
+		case UpstreamStateUnpublished:
+			return buildPushGitArgs(route.RemoteName, route.PushType, route.Branch, false), nil
+		case UpstreamStateNotApplicable:
+			return nil, errors.New("there is no pushable branch: the head is detached or has no commit")
+		default:
+			// pending or unavailable: the state has not settled, and a push
+			// must never start from an unsettled read
+			return nil, errors.New("the branch state has not settled, so the push was not started")
+		}
+	default:
+		return nil, fmt.Errorf("unknown push intent %q", route.Intent)
+	}
+}
+
+// ------------------------------------
+//
+//	UnstartedGitPushResult builds the definitive result for a push refused
+//	before any process existed, so a signing-required push whose preparation
+//	fails can display the same "not started" diagnostics as the background
+//	route.
+//
+// ------------------------------------
+func UnstartedGitPushResult(workingDirectory string, cause error) GitPushResult {
+	result := newGitPushResult()
+	result.workingDirectory = workingDirectory
+	result.err = cause
+	return result
+}
+
+// ------------------------------------
+//
 //	Drain one git push output pipe to EOF, retaining the raw bytes in
 //	rawBuffer and mirroring the lines into the matching live progress buffer.
 //	After the context is cancelled the pipe keeps draining so the child can
@@ -511,14 +650,20 @@ func (gc *GitCommit) GitPushResult() GitPushResult {
 
 // ------------------------------------
 //
-//	Related to Git Push
+//	GitPush executes the confirmed push or publish route on the generation's
+//	command executor. The route's intent, remote, push type, and branch are
+//	re-validated by prepareGitPush immediately before the process is
+//	started, and the route's execution guard is checked just before Start so
+//	a worktree switch between confirmation and launch refuses the attempt
+//	instead of pushing from the wrong generation.
 //
 // ------------------------------------
-func (gc *GitCommit) GitPush(ctx context.Context, originName string, pushType string, currentCheckOutBranch string) GitPushResult {
+func (gc *GitCommit) GitPush(ctx context.Context, route GitPushRoute) GitPushResult {
 	if !gc.gitProcessLock.CanProceedWithGitOps() {
 		return gc.publishGitPushResult(GitPushResult{
-			exitCode: -1,
-			err:      fmt.Errorf("%s", gc.gitProcessLock.OtherProcessRunningWarning()),
+			exitCode:         -1,
+			workingDirectory: gc.pushWorkingDirectory(),
+			err:              fmt.Errorf("%s", gc.gitProcessLock.OtherProcessRunningWarning()),
 		})
 	}
 	defer func() {
@@ -528,11 +673,16 @@ func (gc *GitCommit) GitPush(ctx context.Context, originName string, pushType st
 	gc.ClearGitRemotePushOutput()
 	gc.clearGitPushResult()
 
-	// check if the checkoutbranch has upstream if not include "-u" flag
-	_, hasUpstream := hasUpStream()
-	pushGitArgs := buildPushGitArgs(originName, pushType, currentCheckOutBranch, hasUpstream)
+	pushGitArgs, prepareErr := gc.prepareGitPush(route)
+	if prepareErr != nil {
+		gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, "", logging.WARN, fmt.Sprintf("[%s NOT STARTED]: %s", logging.GIT_PUSH_OPS, prepareErr.Error()), true)
+		result := newGitPushResult()
+		result.workingDirectory = gc.pushWorkingDirectory()
+		result.err = prepareErr
+		return gc.publishGitPushResult(result)
+	}
 
-	cmd := executor.GittiCmdExecutor.RunGitCmdWithContext(ctx, pushGitArgs, true)
+	cmd := gc.cmdExecutor.RunGitCmdWithContext(ctx, pushGitArgs, true)
 
 	// The result owns defensive copies of the process identity before anything
 	// can mutate the command.
@@ -553,6 +703,21 @@ func (gc *GitCommit) GitPush(ctx context.Context, originName string, pushType st
 		gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, "", logging.ERROR, fmt.Sprintf("[PIPE ERROR]: %s", err.Error()), false)
 		result.err = err
 		return gc.publishGitPushResult(result)
+	}
+
+	// The route's execution guard rejects the attempt when the Git-
+	// operations generation changed after the route was confirmed and
+	// before the process started; no process may be launched from a stale
+	// generation, and the result keeps the not-started shape of a prepare
+	// refusal rather than a command that never ran.
+	if route.ActiveGuard != nil {
+		if guardErr := route.ActiveGuard(); guardErr != nil {
+			gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, "", logging.WARN, fmt.Sprintf("[%s NOT STARTED]: %s", logging.GIT_PUSH_OPS, guardErr.Error()), true)
+			result.argv = nil
+			result.workingDirectory = gc.pushWorkingDirectory()
+			result.err = guardErr
+			return gc.publishGitPushResult(result)
+		}
 	}
 
 	// Start the process
@@ -665,16 +830,27 @@ func (gc *GitCommit) GitPush(ctx context.Context, originName string, pushType st
 
 // ------------------------------------
 //
-//	GitPushWithSigning constructs a git push command for terminal execution when signing is required.
-//	When push signing is enabled, gitti UI is suspended and the push is executed directly in the terminal,
-//	allowing the user to interact with the signing prompt (e.g., GPG passphrase).
+//	pushWorkingDirectory returns the directory the push routes run in: the
+//	generation executor's captured worktree.
 //
 // ------------------------------------
-func (gc *GitCommit) GitPushWithSigning(originName string, pushType string, currentCheckOutBranch string) []string {
-	// check if the checkoutbranch has upstream if not include "-u" flag
-	_, hasUpstream := hasUpStream()
+func (gc *GitCommit) pushWorkingDirectory() string {
+	if gc.cmdExecutor != nil {
+		return gc.cmdExecutor.RepoPath()
+	}
+	return executor.GittiCmdExecutor.RepoPath()
+}
 
-	return buildPushGitArgs(originName, pushType, currentCheckOutBranch, hasUpstream)
+// ------------------------------------
+//
+//	GitPushWithSigning constructs the git push argv for terminal execution
+//	when signing is required. The route is validated with exactly the same
+//	preparation as the background route; a non-nil error is an unstarted,
+//	actionable refusal the caller must surface without suspending the UI.
+//
+// ------------------------------------
+func (gc *GitCommit) GitPushWithSigning(route GitPushRoute) ([]string, error) {
+	return gc.prepareGitPush(route)
 }
 
 // ------------------------------------

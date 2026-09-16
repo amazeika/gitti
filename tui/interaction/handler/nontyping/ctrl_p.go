@@ -1,7 +1,11 @@
 package nontyping
 
 import (
+	"fmt"
+
 	tea "charm.land/bubbletea/v2"
+	"github.com/gohyuhan/gitti/i18n"
+	"github.com/gohyuhan/gitti/logging"
 	"github.com/gohyuhan/gitti/tui/component/reflog"
 	"github.com/gohyuhan/gitti/tui/component/tag"
 	"github.com/gohyuhan/gitti/tui/constant"
@@ -61,7 +65,14 @@ func handleNonTypingCtrlpKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 			if selectedTag == nil {
 				return m, nil
 			}
-			if !m.GitOperations.GitRemote.CheckRemoteExist(false) {
+			if m.GitOperations.GitRemote.CheckRemoteExist(false) != nil {
+				// the remote inventory read failed: report it instead of
+				// opening the chooser, since an empty read must never be
+				// treated as "no remotes"
+				m.GittiLogger.RegisterNewLog(logging.CHECK_REMOTE_OPS, "", logging.WARN,
+					fmt.Sprintf("[%s WARN]: %s", logging.CHECK_REMOTE_OPS, i18n.LANGUAGEMAPPING.PushInventoryReadFailedWarning), false)
+				return m, nil
+			} else if len(m.GitOperations.GitRemote.Remote()) == 0 {
 				// if no remote found, we add one
 				showAddRemotePromptPopUp(m)
 			} else {

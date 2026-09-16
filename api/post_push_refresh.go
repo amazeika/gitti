@@ -196,12 +196,13 @@ func (gd *GitDaemon) runBranchStatePass(ops *GitOperations) error {
 
 // ------------------------------------
 //
-//	runRemoteUpstreamStatePass performs the remote/upstream local read: the
-//	typed upstream observation plus its matching payload, then the remote
-//	branch list. It performs no network I/O and never waits for one. Each
-//	sub-read publishes its own complete snapshot, so a sub-read failure
-//	preserves that sub-read's last good state while the successful sub-read
-//	may still publish; the pass as a whole reports the joined failure.
+//	runRemoteUpstreamStatePass performs the remote/upstream local reads:
+//	first the configured-remote inventory, then the typed upstream
+//	observation plus its matching payload, then the remote branch list. It
+//	performs no network I/O and never waits for one. Each sub-read
+//	publishes its own complete snapshot, so a sub-read failure preserves
+//	that sub-read's last good state while the successful sub-read may still
+//	publish; the pass as a whole reports the joined failure.
 //
 //	When the remote/upstream read fails for the current generation it has
 //	published the unavailable health of that generation, and the pass emits
@@ -215,6 +216,13 @@ func (gd *GitDaemon) runRemoteUpstreamStatePass(ops *GitOperations) error {
 		(*hook)()
 	}
 	var readErrs []error
+	// the inventory refresh runs as part of this domain, so a successful
+	// publish reconciliation publishes the refreshed configured-remote
+	// generation before the observation resolves; a failed refresh keeps
+	// the last good inventory
+	if invErr := ops.GitRemote.CheckRemoteExist(true); invErr != nil {
+		readErrs = append(readErrs, invErr)
+	}
 	syncErr := ops.GitRemote.GetLatestRemoteSyncStatusAndUpstream(gd.worktreeGenerationGuard(ops))
 	if syncErr != nil {
 		readErrs = append(readErrs, syncErr)
@@ -287,6 +295,28 @@ func (gd *GitDaemon) runCommitLogStatePass(ops *GitOperations) error {
 func (gd *GitDaemon) worktreeGenerationGuard(ops *GitOperations) git.PublishGuard {
 	return func() error {
 		if gd.gitOperations.Load() != ops {
+			return errStaleWorktreeGeneration
+		}
+		return nil
+	}
+}
+
+// ------------------------------------
+//
+//	WorktreeGenerationGuard returns the push execution guard the TUI binds
+//	to a confirmed route. It rejects when the daemon's GitOperations
+//	generation is no longer the one the guard was captured from, so a
+//	worktree switch between the push confirmation and the process start
+//	references the push instead of executing it from a stale generation.
+//	When no daemon is running (embedded use) the guard permits.
+//
+// ------------------------------------
+func WorktreeGenerationGuard(captured *GitOperations) git.PublishGuard {
+	return func() error {
+		if GITDAEMON == nil {
+			return nil
+		}
+		if GITDAEMON.gitOperations.Load() != captured {
 			return errStaleWorktreeGeneration
 		}
 		return nil

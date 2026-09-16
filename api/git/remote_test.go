@@ -6,8 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 
+	"github.com/gohyuhan/gitti/executor"
 	"github.com/gohyuhan/gitti/logging"
 )
 
@@ -21,7 +24,7 @@ import (
 func remoteSyncHandlerUnderTest(t *testing.T) *GitRemote {
 	t.Helper()
 	gittiLogging := logging.InitGittiLogging(64, make(chan string, 256), 3)
-	return InitGitRemote(make(chan string, 16), nil, gittiLogging)
+	return InitGitRemote(make(chan string, 16), nil, executor.GittiCmdExecutor, gittiLogging)
 }
 
 // ------------------------------------
@@ -266,5 +269,74 @@ exec %q "$@"
 	}
 	if status := snapshot.RemoteSyncStatus; status != (RemoteSyncStatus{Local: "1", Remote: "0"}) {
 		t.Errorf("counts = %v, want 1 0 for master against origin/master", status)
+	}
+}
+
+// ------------------------------------
+//
+//	TestRemoteInventoryEntriesAreDefensiveDeepCopies proves a reader can
+//	mutate its returned inventory in place while other readers keep seeing
+//	the stored generation: the race detector checks the access pattern and
+//	the final assertions check the isolation of the copies
+//
+// ------------------------------------
+func TestRemoteInventoryEntriesAreDefensiveDeepCopies(t *testing.T) {
+	const remoteURL = "https://example.com/origin.git"
+	_, run := repositoryUnderTest(t)
+	run("remote", "add", "origin", remoteURL)
+
+	gr := remoteSyncHandlerUnderTest(t)
+	if err := gr.CheckRemoteExist(true); err != nil {
+		t.Fatalf("reading the remote inventory failed: %v", err)
+	}
+	entries := gr.RemoteInventory().Entries()
+	if len(entries) != 1 || entries[0].Name != "origin" || len(entries[0].FetchURLs) != 1 || len(entries[0].PushURLs) != 1 {
+		t.Fatalf("inventory entries = %v, want the single origin remote with both URL sets", entries)
+	}
+
+	// mutate the returned copy in place while another reader polls the
+	// stored generation: a shallow copy would let this writer race the
+	// readers on the shared backing arrays
+	stopped := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		for {
+			select {
+			case <-stopped:
+				return
+			default:
+			}
+			for i := range entries {
+				entries[i].Name = "mutated"
+				entries[i].FetchURLs[0] = "mutated-fetch"
+				entries[i].PushURLs[0] = "mutated-push"
+			}
+			runtime.Gosched()
+		}
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		stored := gr.RemoteInventory().Entries()
+		if len(stored) != 1 || stored[0].Name != "origin" {
+			t.Fatalf("the in-place mutation leaked into the stored generation: %v", stored)
+		}
+		if stored[0].FetchURLs[0] != remoteURL || stored[0].PushURLs[0] != remoteURL {
+			t.Fatalf("the in-place mutation leaked into the stored URL sets: fetch %v, push %v", stored[0].FetchURLs, stored[0].PushURLs)
+		}
+		runtime.Gosched()
+	}
+
+	// stop and join the writer before reading its own copy back
+	close(stopped)
+	<-finished
+
+	// the mutated copy stays mutated and the stored generation stays intact
+	if entries[0].Name != "mutated" || entries[0].FetchURLs[0] != "mutated-fetch" {
+		t.Errorf("the reader's own copy was not kept mutable: %v", entries[0])
+	}
+	if stored := gr.RemoteInventory().Entries(); stored[0].Name != "origin" || stored[0].FetchURLs[0] != remoteURL {
+		t.Errorf("the stored generation was altered: %v", stored[0])
 	}
 }

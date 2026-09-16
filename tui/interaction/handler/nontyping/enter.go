@@ -2,11 +2,14 @@ package nontyping
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/gohyuhan/gitti/api"
 	"github.com/gohyuhan/gitti/api/git"
+	"github.com/gohyuhan/gitti/i18n"
 	"github.com/gohyuhan/gitti/logging"
 	"github.com/gohyuhan/gitti/settings"
 	"github.com/gohyuhan/gitti/tui/component/branch"
@@ -137,6 +140,14 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 						m.IsTyping.Store(false)
 						m.ShowPopUp.Store(true)
 						pushPopUp.InitChoosePushTypePopUpModel(m, remoteName)
+					case constant.PUBLISHACTION:
+						m.PopUpType = constant.PublishBranchConfirmationPopUp
+						m.IsTyping.Store(false)
+						m.ShowPopUp.Store(true)
+						// the confirmation popup works from the branch and the
+						// Git-operations generation captured when the chooser
+						// opened, not from the live model state
+						pushPopUp.InitPublishBranchConfirmationPopUpModel(m, remoteName, popUp.ObservedBranch, popUp.GitOperations)
 					case constant.CREATEBRANCHBASEDONREMOTE:
 						m.IsTyping.Store(true)
 						m.ShowPopUp.Store(true)
@@ -175,18 +186,76 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 			if ok {
 				selectedOption := popUp.PushOptionList.SelectedItem()
 				if selectedOption != nil {
+					// the confirmed push route binds the worktree-generation
+					// execution guard so a switch after the confirmation but
+					// before the process start refuses the attempt
+					route := git.GitPushRoute{
+						RemoteName:  popUp.RemoteName,
+						PushType:    selectedOption.(pushPopUp.GitPushOptionItem).PushType,
+						Branch:      m.CheckOutBranch,
+						Intent:      git.PushIntentPush,
+						ActiveGuard: api.WorktreeGenerationGuard(m.GitOperations),
+					}
 					if m.GitPushRequireSigning && !settings.GITTICONFIGSETTINGS.OverrideSigningUISuspend {
-						gitArgs := m.GitOperations.GitCommit.GitPushWithSigning(popUp.RemoteName, selectedOption.(pushPopUp.GitPushOptionItem).PushType, m.CheckOutBranch)
-						// execute in the active model repository path so the suspended
-						// push tracks the selected worktree rather than the launch directory
-						return utils.SuspendGittiUIForGitOperationRequireSigningWithWorkdir(m, gitArgs, m.RepoPath, logging.GIT_PUSH_WITH_SIGNING_OPS)
+						if gitArgs, err := m.GitOperations.GitCommit.GitPushWithSigning(route); err != nil {
+							return showUnstartedGitPushDiagnostics(m, err)
+						} else {
+							// execute in the active model repository path so the suspended
+							// push tracks the selected worktree rather than the launch
+							// directory; the route guard re-checks the generation
+							// immediately before the suspended launch
+							return utils.SuspendGittiUIForGitOperationRequireSigningWithWorkdir(m, gitArgs, m.GitOperations.AbsoluteWorktreePath, route.ActiveGuard, logging.GIT_PUSH_WITH_SIGNING_OPS)
+						}
 					} else {
 						m.PopUpType = constant.GitRemotePushPopUp
 						m.ShowPopUp.Store(true)
 						m.IsTyping.Store(false)
-						return services.InitGitRemotePushPopUpModelAndStartGitRemotePushService(m, popUp.RemoteName, selectedOption.(pushPopUp.GitPushOptionItem).PushType)
+						return services.InitGitRemotePushPopUpModelAndStartGitRemotePushService(m, route)
 					}
 				}
+			}
+
+		case constant.PublishBranchConfirmationPopUp:
+			popUp, ok := m.PopUpModel.(*pushPopUp.PublishBranchConfirmationPopUpModel)
+			if ok {
+				// the publish route re-resolves the branch state through the
+				// generation executor immediately before the process starts, so
+				// the confirmation here only names the target remote and branch;
+				// the guard binds to the generation the confirmation popup was
+				// captured from, not the worktree active when the user confirms
+				captured := popUp.GitOperations
+				if captured == nil {
+					captured = m.GitOperations
+				}
+				route := git.GitPushRoute{
+					RemoteName:  popUp.RemoteName,
+					Branch:      popUp.Branch,
+					Intent:      git.PushIntentPublish,
+					ActiveGuard: api.WorktreeGenerationGuard(captured),
+				}
+				if m.GitPushRequireSigning && !settings.GITTICONFIGSETTINGS.OverrideSigningUISuspend {
+					if route.ActiveGuard != nil {
+						if guardErr := route.ActiveGuard(); guardErr != nil {
+							return showUnstartedGitPushDiagnostics(m, guardErr)
+						}
+					}
+					if gitArgs, err := m.GitOperations.GitCommit.GitPushWithSigning(route); err != nil {
+						// a refused preparation is an unstarted, actionable
+						// refusal: show the push popup with its deterministic
+						// "not started" diagnostics instead of suspending the UI
+						return showUnstartedGitPushDiagnostics(m, err)
+					} else {
+						// execute in the captured worktree so the suspended publish
+						// tracks the confirmed generation rather than the launch directory;
+						// the route guard re-checks the generation immediately before the
+						// suspended launch
+						return utils.SuspendGittiUIForGitOperationRequireSigningWithWorkdir(m, gitArgs, m.GitOperations.AbsoluteWorktreePath, route.ActiveGuard, logging.GIT_PUSH_WITH_SIGNING_OPS)
+					}
+				}
+				m.PopUpType = constant.GitRemotePushPopUp
+				m.ShowPopUp.Store(true)
+				m.IsTyping.Store(false)
+				return services.InitGitRemotePushPopUpModelAndStartGitRemotePushService(m, route)
 			}
 
 		case constant.ChooseNewBranchTypePopUp:
@@ -199,7 +268,12 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 				newBranchType := selectedOption.(branchPopUp.GitNewBranchTypeOptionItem).NewBranchType
 				switch newBranchType {
 				case git.NEWBRANCHBASEDONREMOTEUSERINPUT:
-					if !m.GitOperations.GitRemote.CheckRemoteExist(false) {
+					if m.GitOperations.GitRemote.CheckRemoteExist(false) != nil {
+						// the remote inventory read failed: report it instead of
+						// treating the branch base as absent
+						m.GittiLogger.RegisterNewLog(logging.CHECK_REMOTE_OPS, "", logging.WARN,
+							fmt.Sprintf("[%s WARN]: %s", logging.CHECK_REMOTE_OPS, i18n.LANGUAGEMAPPING.PushInventoryReadFailedWarning), false)
+					} else if len(m.GitOperations.GitRemote.Remote()) == 0 {
 						// if no remote found, we add one
 						showAddRemotePromptPopUp(m)
 					} else {
@@ -494,7 +568,12 @@ func handleNonTypingEnterKeyBindingInteraction(m *types.GittiModel) (*types.Gitt
 					case git.TAGDELETEREMOTE:
 						// first we need to check if there are any origin for this repo
 						// if not we prompt the user to add a new remote origin
-						if !m.GitOperations.GitRemote.CheckRemoteExist(false) {
+						if m.GitOperations.GitRemote.CheckRemoteExist(false) != nil {
+							// the remote inventory read failed: report it instead of
+							// treating the absence as "no remotes"
+							m.GittiLogger.RegisterNewLog(logging.CHECK_REMOTE_OPS, "", logging.WARN,
+								fmt.Sprintf("[%s WARN]: %s", logging.CHECK_REMOTE_OPS, i18n.LANGUAGEMAPPING.PushInventoryReadFailedWarning), false)
+						} else if len(m.GitOperations.GitRemote.Remote()) == 0 {
 							showAddRemotePromptPopUp(m)
 						} else {
 							m.ShowPopUp.Store(true)
@@ -804,4 +883,32 @@ func promoteSuccessfulSingleColumnDrillDown(m *types.GittiModel) {
 	if m.ScreenMode == constant.ScreenModeSingleColumn {
 		m.ScreenMode = constant.ScreenModeFocused
 	}
+}
+
+// ------------------------------------
+//
+//	showUnstartedGitPushDiagnostics surfaces a push refused before any
+//	process existed (a failed preparation or a stale worktree generation):
+//	it opens the push output popup with the deterministic "not started"
+//	diagnostics instead of starting or suspending anything, so the user sees
+//	the working directory, the would-be argv context, and the actionable
+//	reason.
+//
+// ------------------------------------
+func showUnstartedGitPushDiagnostics(m *types.GittiModel, cause error) (*types.GittiModel, tea.Cmd) {
+	m.PopUpType = constant.GitRemotePushPopUp
+	m.ShowPopUp.Store(true)
+	m.IsTyping.Store(false)
+	pushPopUp.InitGitRemotePushPopUpModel(m)
+	popUp, ok := m.PopUpModel.(*pushPopUp.GitRemotePushPopUpModel)
+	if !ok {
+		return m, nil
+	}
+	result := git.UnstartedGitPushResult(m.GitOperations.AbsoluteWorktreePath, cause)
+	pushPopUp.UpdateGitPushResultEvent(m, types.GitPushResultEventDataStructure{
+		Success: false,
+		Result:  result,
+		Attempt: pushPopUp.BeginGitRemotePushAttempt(popUp),
+	})
+	return m, nil
 }

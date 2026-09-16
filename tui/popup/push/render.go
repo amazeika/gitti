@@ -141,6 +141,29 @@ func RenderChoosePushTypePopUp(m *types.GittiModel) string {
 
 // ------------------------------------
 //
+//	Render the publish branch confirmation popup. Shows a titled bordered
+//	list with the single publish option naming the branch and the target
+//	remote; confirming it runs the first push with --set-upstream.
+//
+// ------------------------------------
+func RenderPublishBranchConfirmationPopUp(m *types.GittiModel) string {
+	popUp, ok := m.PopUpModel.(*PublishBranchConfirmationPopUpModel)
+	if ok {
+		popUpWidth := min(constant.MaxChoosePushTypePopUpWidth, int(float64(m.Width)*0.8))
+		title := style.TitleStyle.Width(popUpWidth).Render(i18n.LANGUAGEMAPPING.PublishBranchConfirmationTitle)
+		popUp.PublishOptionList.SetWidth(popUpWidth - 4)
+		content := lipgloss.JoinVertical(
+			lipgloss.Left,
+			title,
+			popUp.PublishOptionList.View(),
+		)
+		return style.PopUpBorderStyle.Width(popUpWidth).Render(content)
+	}
+	return ""
+}
+
+// ------------------------------------
+//
 //	Render the git push progress popup. Shows a scrollable output viewport with
 //	a border that turns red on error or green on success. Displays a spinner
 //	above the viewport while IsProcessing is true.

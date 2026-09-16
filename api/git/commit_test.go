@@ -54,7 +54,7 @@ func gitCommitUnderTestWithFakeGit(t *testing.T, script string) (*GitCommit, *Gi
 
 	gittiLogging := logging.InitGittiLogging(64, make(chan string, 256), 3)
 	processLock := InitGitProcessLock(gittiLogging)
-	gitCommit := InitGitCommit(make(chan string, 16), processLock, gittiLogging)
+	gitCommit := InitGitCommit(make(chan string, 16), processLock, executor.GittiCmdExecutor, gittiLogging)
 
 	return gitCommit, processLock, gittiLogging, root, gitPath
 }
@@ -79,6 +79,15 @@ func argvCarriesOperationArgs(argv, operationArgs []string) bool {
 //	Report the log entries a run recorded at the given severity level
 //
 // ------------------------------------
+// ------------------------------------
+//
+//	Build the tracked-branch push route the argv tests confirm
+//
+// ------------------------------------
+func pushRouteUnderTest(branch string) GitPushRoute {
+	return GitPushRoute{RemoteName: "origin", PushType: PUSH, Branch: branch, Intent: PushIntentPush}
+}
+
 func logsAtSeverity(gittiLogging *logging.GittiLogging, severity string) []string {
 	var recorded []string
 	for _, entry := range gittiLogging.GetFullLogs() {
@@ -114,6 +123,17 @@ func TestBuildPushGitArgsPreservesTheExistingPushMatrix(t *testing.T) {
 
 func TestGitPushWithSigningSharesThePushArgumentBuilder(t *testing.T) {
 	gitCommit, _, _, _, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    if [ "$FAKE_GIT_UPSTREAM" = "absent" ]; then exit 1; fi
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse)
@@ -121,6 +141,7 @@ for a in "$@"; do
       echo "origin/master"
       exit 0
       ;;
+    rev-list) echo "0 0"; exit 0 ;;
   esac
 done
 exit 0
@@ -131,7 +152,11 @@ exit 0
 			t.Setenv("FAKE_GIT_UPSTREAM", upstreamState)
 			for _, pushType := range []string{PUSH, FORCEPUSHSAFE, FORCEPUSHDANGEROUS} {
 				want := buildPushGitArgs("origin", pushType, "master", hasUpstream)
-				if got := gitCommit.GitPushWithSigning("origin", pushType, "master"); !slices.Equal(got, want) {
+				got, err := gitCommit.GitPushWithSigning(GitPushRoute{RemoteName: "origin", PushType: pushType, Branch: "master", Intent: PushIntentPush})
+				if err != nil {
+					t.Fatalf("%s %s: GitPushWithSigning() refused a valid push route: %v", upstreamState, pushType, err)
+				}
+				if !slices.Equal(got, want) {
 					t.Errorf("%s %s: GitPushWithSigning() = %v, want the shared builder's %v", upstreamState, pushType, got, want)
 				}
 			}
@@ -151,10 +176,10 @@ func TestGitPushRecordsTheDefinitiveResultForASuccessfulPush(t *testing.T) {
 	}
 	run("remote", "add", "origin", bareRemote)
 
-	gitCommit := InitGitCommit(make(chan string, 16), InitGitProcessLock(logging.InitGittiLogging(64, make(chan string, 256), 3)), logging.InitGittiLogging(64, make(chan string, 256), 3))
+	gitCommit := InitGitCommit(make(chan string, 16), InitGitProcessLock(logging.InitGittiLogging(64, make(chan string, 256), 3)), executor.GittiCmdExecutor, logging.InitGittiLogging(64, make(chan string, 256), 3))
 
 	// First push: no upstream yet, so the -u and branch operands must be present.
-	first := gitCommit.GitPush(context.Background(), "origin", PUSH, "master")
+	first := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	if !first.Success() {
 		t.Fatalf("first push did not succeed: exit %d, cancelled %v, err %v", first.ExitCode(), first.Cancelled(), first.Err())
 	}
@@ -181,7 +206,7 @@ func TestGitPushRecordsTheDefinitiveResultForASuccessfulPush(t *testing.T) {
 
 	// Second push: the upstream now exists, so no -u or branch operand may be
 	// retained from the first attempt's shape.
-	second := gitCommit.GitPush(context.Background(), "origin", PUSH, "master")
+	second := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	if !second.Success() {
 		t.Fatalf("second push did not succeed: exit %d, err %v", second.ExitCode(), second.Err())
 	}
@@ -195,16 +220,27 @@ func TestGitPushRecordsTheDefinitiveResultForASuccessfulPush(t *testing.T) {
 
 func TestGitPushRecordsTheExactExitCodeAndStderrForANonZeroExit(t *testing.T) {
 	gitCommit, _, gittiLogging, _, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push) echo "error: failed to push some refs" >&2; exit 1 ;;
   esac
 done
 exit 0
 `)
 
-	result := gitCommit.GitPush(context.Background(), "origin", PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 
 	if result.Started() != true {
 		t.Error("the process started, so Started() must be true")
@@ -240,7 +276,7 @@ exit 0
 	}
 	defer processLock.ReleaseGitOpsLock()
 
-	result := gitCommit.GitPush(context.Background(), "origin", PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 
 	if result.Started() {
 		t.Error("a refused push never starts a process")
@@ -261,9 +297,20 @@ exit 0
 
 func TestGitPushCancellationIsADistinctOutcomeWithBothStreamsRetained(t *testing.T) {
 	gitCommit, _, gittiLogging, _, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push)
       echo "stdout-progress"
       echo "stderr-progress" >&2
@@ -277,7 +324,7 @@ exit 0
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan GitPushResult, 1)
 	go func() {
-		done <- gitCommit.GitPush(ctx, "origin", PUSH, "master")
+		done <- gitCommit.GitPush(ctx, pushRouteUnderTest("master"))
 	}()
 
 	// Cancel only once the process is provably started: the fake writes both
@@ -339,9 +386,20 @@ func TestGitPushDrainsLargeStreamsConcurrentlyWithoutDeadlock(t *testing.T) {
 	// scanner: without concurrent draining the child blocks on write and the
 	// wait never returns.
 	gitCommit, _, _, _, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push)
       i=0
       while [ "$i" -lt 100 ]; do
@@ -363,7 +421,7 @@ exit 0
 
 	done := make(chan GitPushResult, 1)
 	go func() {
-		done <- gitCommit.GitPush(context.Background(), "origin", PUSH, "master")
+		done <- gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	}()
 
 	select {
@@ -386,16 +444,27 @@ func TestGitPushReadFailureIsRecordedWhileKeepingTheExitStatus(t *testing.T) {
 	// One line past the scanner's ceiling is a read failure, not a process
 	// failure: the exit status must still be recorded and the outcome logged.
 	gitCommit, _, gittiLogging, _, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push) { head -c 100000 /dev/zero | tr '\0' 'x'; } >&2 ;;
   esac
 done
 exit 0
 `)
 
-	result := gitCommit.GitPush(context.Background(), "origin", PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 
 	if result.ExitCode() != 0 {
 		t.Errorf("ExitCode() = %d, want the exact 0 the process reported", result.ExitCode())
@@ -422,9 +491,20 @@ exit 0
 
 func TestGitPushClearsThePreviousAttemptBeforeStarting(t *testing.T) {
 	gitCommit, _, _, _, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push)
       if [ -n "$FAKE_GIT_TAG" ]; then echo "$FAKE_GIT_TAG" >&2; fi
       if [ "$FAKE_GIT_SLOW" = "1" ]; then sleep 1; fi
@@ -437,7 +517,7 @@ exit 0
 
 	t.Setenv("FAKE_GIT_TAG", "FIRST-ATTEMPT")
 	t.Setenv("FAKE_GIT_EXIT", "3")
-	first := gitCommit.GitPush(context.Background(), "origin", PUSH, "master")
+	first := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	if first.ExitCode() != 3 {
 		t.Fatalf("first push ExitCode() = %d, want 3", first.ExitCode())
 	}
@@ -447,7 +527,7 @@ exit 0
 	t.Setenv("FAKE_GIT_SLOW", "1")
 	done := make(chan GitPushResult, 1)
 	go func() {
-		done <- gitCommit.GitPush(context.Background(), "origin", PUSH, "master")
+		done <- gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	}()
 
 	// While the second push is in flight, the stored result must no longer
@@ -479,13 +559,13 @@ exit 0
 	}
 }
 
-func TestGitPushStartFailureReturnsATypedResult(t *testing.T) {
+func TestGitPushUnreadableBranchStateIsRefusedBeforeStarting(t *testing.T) {
 	gitCommit, _, gittiLogging, _, fakeGit := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
 exit 0
 `)
 
-	// The unexecutable fake makes the process fail to start: a setup failure
-	// with its own typed result and log entry rather than a sentinel. PATH is
+	// The unexecutable fake makes the pre-start observation fail: the push
+	// must be refused with a typed result before any process starts. PATH is
 	// restricted to the fake's directory so LookPath has no real git to fall
 	// back to.
 	if err := os.Chmod(fakeGit, 0); err != nil {
@@ -493,37 +573,54 @@ exit 0
 	}
 	t.Setenv("PATH", filepath.Dir(fakeGit))
 
-	result := gitCommit.GitPush(context.Background(), "origin", PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 
 	if result.Started() {
-		t.Error("the process could not start, so Started() must be false")
+		t.Error("a refused push never starts a process")
 	}
 	if result.ExitCode() != -1 {
 		t.Errorf("ExitCode() = %d, want -1 for the absent process status", result.ExitCode())
 	}
 	if result.Err() == nil {
-		t.Error("Err() = nil, want the start error so the popup can act on it")
+		t.Error("Err() = nil, want the refusal error so the popup can act on it")
 	}
 	if result.Success() {
-		t.Error("a start failure must not be reported as a success")
+		t.Error("a refused push must not be reported as a success")
 	}
-	var startErrorLogged bool
+	var notStartedLogged, startErrorLogged bool
 	for _, entry := range gittiLogging.GetFullLogs() {
-		if entry.OpsSeverityLevel == logging.ERROR && strings.Contains(entry.OpsDescription, "START ERROR") {
+		if entry.OpsSeverityLevel == logging.WARN && strings.Contains(entry.OpsDescription, "NOT STARTED") {
+			notStartedLogged = true
+		}
+		if strings.Contains(entry.OpsDescription, "START ERROR") {
 			startErrorLogged = true
 		}
 	}
-	if !startErrorLogged {
-		t.Error("a start failure left no START ERROR log entry")
+	if !notStartedLogged {
+		t.Error("a refusal before start left no NOT STARTED log entry")
+	}
+	if startErrorLogged {
+		t.Error("a refusal before start was misreported as a START ERROR")
 	}
 }
 
 func TestGitPushRetainsCompleteOutputWhenTheReaderRunsAfterTheChildExits(t *testing.T) {
 	doneMarker := "git-push-done"
 	gitCommit, _, gittiLogging, root, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push)
       echo "complete-output"
       touch "$FAKE_GIT_DONE"
@@ -542,7 +639,7 @@ exit 0
 
 	done := make(chan GitPushResult, 1)
 	go func() {
-		done <- gitCommit.GitPush(context.Background(), "origin", PUSH, "master")
+		done <- gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	}()
 
 	// Release the readers only after the child has provably exited.
@@ -578,13 +675,29 @@ exit 0
 
 func TestGitPushPreCancelledContextIsReportedAsCancellation(t *testing.T) {
 	gitCommit, _, gittiLogging, _, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
+for a in "$@"; do
+  case "$a" in
+    rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
+  esac
+done
 exit 0
 `)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	result := gitCommit.GitPush(ctx, "origin", PUSH, "master")
+	result := gitCommit.GitPush(ctx, pushRouteUnderTest("master"))
 
 	if result.Started() {
 		t.Error("the process could not start, so Started() must be false")
@@ -622,9 +735,20 @@ func TestGitPushNonZeroExitWithStreamReadFailureRetainsBothErrors(t *testing.T) 
 	// A rejected push whose stderr also cannot be read to completion must
 	// keep the exit error and the stream read failure together.
 	gitCommit, _, gittiLogging, _, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push)
       { head -c 100000 /dev/zero | tr '\0' 'x'; } >&2
       echo "error: failed to push some refs"
@@ -635,7 +759,7 @@ done
 exit 0
 `)
 
-	result := gitCommit.GitPush(context.Background(), "origin", PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 
 	if result.Started() != true {
 		t.Error("the process started, so Started() must be true")
@@ -676,9 +800,20 @@ func TestGitPushRecordsReadFailuresOnBothStreams(t *testing.T) {
 	// When neither stream can be read to completion, both failures are
 	// recorded stream-qualified and neither masks the other.
 	gitCommit, _, gittiLogging, _, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push)
       head -c 100000 /dev/zero | tr '\0' 'x'
       { head -c 100000 /dev/zero | tr '\0' 'y'; } >&2
@@ -688,7 +823,7 @@ done
 exit 0
 `)
 
-	result := gitCommit.GitPush(context.Background(), "origin", PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 
 	if result.ExitCode() != 0 {
 		t.Errorf("ExitCode() = %d, want the exact 0 the process reported", result.ExitCode())
@@ -719,5 +854,129 @@ exit 0
 	}
 	if !stdoutLogged || !stderrLogged {
 		t.Errorf("both stream read failures must be logged stream-qualified; stdout %v, stderr %v", stdoutLogged, stderrLogged)
+	}
+}
+
+func TestGitPushBranchDriftBetweenRouteAndWorktreeIsRefused(t *testing.T) {
+	// The confirmed route named one branch, but the worktree checked out
+	// another before the push started: the attempt must be refused without
+	// starting a process and without pushing the wrong ref. The refusal
+	// holds for the normal and both force push types.
+	gitCommit, _, gittiLogging, _, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "feature/drift"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
+for a in "$@"; do
+  case "$a" in
+    rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
+    push)
+      echo "must-not-run"
+      exit 0
+      ;;
+  esac
+done
+exit 0
+`)
+
+	for _, pushType := range []string{PUSH, FORCEPUSHSAFE, FORCEPUSHDANGEROUS} {
+		t.Run(pushType, func(t *testing.T) {
+			result := gitCommit.GitPush(context.Background(), GitPushRoute{RemoteName: "origin", PushType: pushType, Branch: "master", Intent: PushIntentPush})
+
+			if result.Started() {
+				t.Error("a drifted worktree must refuse the push before starting")
+			}
+			if result.ExitCode() != -1 {
+				t.Errorf("ExitCode() = %d, want -1 for the absent process status", result.ExitCode())
+			}
+			if result.Success() {
+				t.Error("a drifted worktree must not report a success")
+			}
+			if result.Err() == nil || !strings.Contains(result.Err().Error(), `changed from "master" to "feature/drift"`) {
+				t.Errorf("Err() = %v, want the branch drift refusal naming both branches", result.Err())
+			}
+			var notStartedLogged bool
+			for _, entry := range gittiLogging.GetFullLogs() {
+				if entry.OpsSeverityLevel == logging.WARN && strings.Contains(entry.OpsDescription, "NOT STARTED") {
+					notStartedLogged = true
+				}
+			}
+			if !notStartedLogged {
+				t.Error("a drifted refusal left no NOT STARTED log entry")
+			}
+		})
+	}
+}
+
+func TestGitPushRouteGuardRefusalIsReportedBeforeStarting(t *testing.T) {
+	// The generation guard is the last pre-start check: when it reports a
+	// stale generation, the prepared arguments are discarded and no process
+	// is launched from the stale confirmation.
+	gitCommit, _, gittiLogging, _, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
+for a in "$@"; do
+  case "$a" in
+    rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
+    push)
+      echo "must-not-run"
+      exit 0
+      ;;
+  esac
+done
+exit 0
+`)
+
+	guardErr := errors.New("the git operations generation changed after the push was confirmed")
+	route := pushRouteUnderTest("master")
+	route.ActiveGuard = func() error { return guardErr }
+
+	result := gitCommit.GitPush(context.Background(), route)
+
+	if result.Started() {
+		t.Error("a guard refusal must not start the prepared process")
+	}
+	if len(result.Argv()) != 0 {
+		t.Errorf("Argv() = %v, want no command retained after a guard refusal", result.Argv())
+	}
+	if result.ExitCode() != -1 {
+		t.Errorf("ExitCode() = %d, want -1 for the absent process status", result.ExitCode())
+	}
+	if !errors.Is(result.Err(), guardErr) {
+		t.Errorf("Err() = %v, want the guard refusal error", result.Err())
+	}
+	if result.Success() {
+		t.Error("a guard refusal must not be reported as a success")
+	}
+	var notStartedLogged, startErrorLogged bool
+	for _, entry := range gittiLogging.GetFullLogs() {
+		if entry.OpsSeverityLevel == logging.WARN && strings.Contains(entry.OpsDescription, "NOT STARTED") {
+			notStartedLogged = true
+		}
+		if strings.Contains(entry.OpsDescription, "START ERROR") {
+			startErrorLogged = true
+		}
+	}
+	if !notStartedLogged {
+		t.Error("a guard refusal left no NOT STARTED log entry")
+	}
+	if startErrorLogged {
+		t.Error("a guard refusal was misreported as a START ERROR")
 	}
 }

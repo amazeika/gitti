@@ -46,6 +46,8 @@ func RenderPopUpComponent(m *types.GittiModel) string {
 		popUp = remote.RenderChooseRemotePopUp(m)
 	case constant.ChoosePushTypePopUp:
 		popUp = push.RenderChoosePushTypePopUp(m)
+	case constant.PublishBranchConfirmationPopUp:
+		popUp = push.RenderPublishBranchConfirmationPopUp(m)
 	case constant.ChooseNewBranchTypePopUp:
 		popUp = branch.RenderChooseNewBranchTypePopUp(m)
 	case constant.CreateNewBranchPopUp:

@@ -20,6 +20,7 @@ const (
 	CommitPopUp                                   = "CommitPopUp"                                   // IsTyping will be true
 	AddRemotePromptPopUp                          = "AddRemotePromptPopUp"                          // IsTyping will be true
 	ChoosePushTypePopUp                           = "ChoosePushTypePopUp"                           // IsTyping will be false
+	PublishBranchConfirmationPopUp                = "PublishBranchConfirmationPopUp"                // IsTyping will be false
 	ChooseRemotePopUp                             = "ChooseRemotePopUp"                             // IsTyping will be false
 	GitRemotePushPopUp                            = "GitRemotePushPopUp"                            // IsTyping will be false
 	ChooseNewBranchTypePopUp                      = "ChooseNewBranchTypePopUp"                      // IsTyping will be false
@@ -257,6 +258,7 @@ const (
 // action that require remote origin
 const (
 	PUSHACTION                = "PUSHACTION"
+	PUBLISHACTION             = "PUBLISHACTION"
 	CREATEBRANCHBASEDONREMOTE = "CREATEBRANCHBASEDONREMOTE"
 	TAGPUSHACTION             = "TAGPUSHACTION"
 	TAGFETCHACTION            = "TAGFETCHACTION"

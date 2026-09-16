@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync/atomic"
 
@@ -40,13 +41,126 @@ type RemoteSyncUpstreamSnapshot struct {
 }
 
 type GitRemote struct {
-	updateChannel  chan string
-	gitProcessLock *GitProcessLock
-	remote         []GitRemoteInfo // all remote info
-	fetchRemote    []GitRemoteInfo // if the url is for fetch
-	pushRemote     []GitRemoteInfo // if the url is for push
-	remoteSync     atomic.Pointer[remoteSyncSnapshot]
-	logging        *logging.GittiLogging
+	updateChannel   chan string
+	gitProcessLock  *GitProcessLock
+	cmdExecutor     *executor.CmdExecutor // generation executor bound to the captured worktree
+	remoteInventory atomic.Pointer[GitRemoteInventory]
+	remoteSync      atomic.Pointer[remoteSyncSnapshot]
+	logging         *logging.GittiLogging
+}
+
+// GitRemoteInventoryEntry holds one configured remote name with its complete
+// immutable fetch and push URL sets exactly as git reported them.
+type GitRemoteInventoryEntry struct {
+	Name      string
+	FetchURLs []string
+	PushURLs  []string
+}
+
+// GitRemoteInventory is one immutable, atomically published generation of
+// the configured-remote inventory: one entry per remote name, in sorted
+// order. A generation is only produced by a successful read, so a failed
+// read can never be mistaken for "no remotes": the previous generation
+// stays published until a successful read replaces it. The zero value is
+// the initial "not yet read" generation and reads as empty.
+type GitRemoteInventory struct {
+	entries []GitRemoteInventoryEntry
+}
+
+// Entries returns a defensive deep copy of the inventory's entries in its
+// deterministic order.
+func (inv GitRemoteInventory) Entries() []GitRemoteInventoryEntry {
+	return inv.defensiveCopy().entries
+}
+
+// defensiveCopy returns a deep copy of the generation: a fresh entries
+// slice with fresh fetch and push URL sets, so a caller can mutate its
+// copy without affecting the stored generation or another reader's copy.
+func (inv GitRemoteInventory) defensiveCopy() GitRemoteInventory {
+	if len(inv.entries) == 0 {
+		return GitRemoteInventory{}
+	}
+	entries := make([]GitRemoteInventoryEntry, len(inv.entries))
+	for i, entry := range inv.entries {
+		entries[i] = GitRemoteInventoryEntry{
+			Name:      entry.Name,
+			FetchURLs: append([]string(nil), entry.FetchURLs...),
+			PushURLs:  append([]string(nil), entry.PushURLs...),
+		}
+	}
+	return GitRemoteInventory{entries: entries}
+}
+
+// PushCapableNames returns one name per entry that has at least one push
+// URL, in the inventory's deterministic order. A fetch-only configured
+// remote is not a publish target.
+func (inv GitRemoteInventory) PushCapableNames() []string {
+	names := []string{}
+	for _, entry := range inv.entries {
+		if len(entry.PushURLs) > 0 {
+			names = append(names, entry.Name)
+		}
+	}
+	return names
+}
+
+// Len returns the number of configured remote names.
+func (inv GitRemoteInventory) Len() int {
+	return len(inv.entries)
+}
+
+// parseRemoteInventory builds one immutable inventory generation from
+// `git remote -v` output. Each non-empty line is a tab-separated remote
+// name, then a URL, then a space-separated final ` (fetch)` or ` (push)`
+// purpose suffix. The name is cut on the first tab and the purpose is cut
+// from the final suffix, so the URL in between is preserved verbatim and
+// a URL that contains spaces survives the parse. Anything else is a parse
+// failure rather than a silently dropped remote, so a malformed read is
+// reported instead of being treated as an absence.
+func parseRemoteInventory(raw []byte) (*GitRemoteInventory, error) {
+	byName := make(map[string]*GitRemoteInventoryEntry)
+	order := []string{}
+
+	for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		name, remainder, found := strings.Cut(line, "\t")
+		if !found || name == "" {
+			return nil, fmt.Errorf("remote inventory: invalid remote line %q", line)
+		}
+		isFetch := strings.HasSuffix(remainder, " (fetch)")
+		isPush := strings.HasSuffix(remainder, " (push)")
+		if !isFetch && !isPush {
+			return nil, fmt.Errorf("remote inventory: invalid remote purpose in line %q", line)
+		}
+		url := strings.TrimSuffix(remainder, " (fetch)")
+		if isPush {
+			url = strings.TrimSuffix(remainder, " (push)")
+		}
+		if url == "" {
+			return nil, fmt.Errorf("remote inventory: invalid remote url in line %q", line)
+		}
+		entry, ok := byName[name]
+		if !ok {
+			entry = &GitRemoteInventoryEntry{Name: name}
+			byName[name] = entry
+			order = append(order, name)
+		}
+		if isFetch {
+			entry.FetchURLs = append(entry.FetchURLs, url)
+		} else {
+			entry.PushURLs = append(entry.PushURLs, url)
+		}
+	}
+
+	sort.Strings(order)
+	entries := make([]GitRemoteInventoryEntry, 0, len(order))
+	for _, name := range order {
+		entries = append(entries, *byName[name])
+	}
+	return &GitRemoteInventory{entries: entries}, nil
 }
 
 type GitRemoteInfo struct {
@@ -63,14 +177,16 @@ type RemoteSyncStatus struct {
 
 // ------------------------------------
 //
-//	Initialize the git remote handler with shared dependencies
+//	Initialize the git remote handler with shared dependencies. The command
+//	executor is the generation's scoped executor so the remote inventory
+//	read and the upstream observation run in the captured worktree.
 //
 // ------------------------------------
-func InitGitRemote(updateChannel chan string, gitProcessLock *GitProcessLock, logging *logging.GittiLogging) *GitRemote {
+func InitGitRemote(updateChannel chan string, gitProcessLock *GitProcessLock, cmdExecutor *executor.CmdExecutor, logging *logging.GittiLogging) *GitRemote {
 	gitRemote := GitRemote{
 		updateChannel:  updateChannel,
 		gitProcessLock: gitProcessLock,
-		remote:         []GitRemoteInfo{},
+		cmdExecutor:    cmdExecutor,
 		logging:        logging,
 	}
 	// until the first state pass completes, the read is pending rather than
@@ -82,29 +198,108 @@ func InitGitRemote(updateChannel chan string, gitProcessLock *GitProcessLock, lo
 
 // ------------------------------------
 //
-//	Return remote
+//	Return the current immutable remote inventory generation as a defensive
+//	deep copy; the zero inventory until the first successful read. A caller
+//	can mutate the returned inventory or any of its URL sets without
+//	affecting the stored generation.
+//
+// ------------------------------------
+func (gr *GitRemote) RemoteInventory() GitRemoteInventory {
+	if inv := gr.remoteInventory.Load(); inv != nil {
+		return inv.defensiveCopy()
+	}
+	return GitRemoteInventory{}
+}
+
+// inventory returns the current generation or the zero inventory before the
+// first successful read
+func (gr *GitRemote) inventory() GitRemoteInventory {
+	return gr.RemoteInventory()
+}
+
+// ------------------------------------
+//
+//	Return remote (derived from the current inventory generation: one info
+//	per unique name-url pair, preserving each url's fetch and push roles)
 //
 // ------------------------------------
 func (gr *GitRemote) Remote() []GitRemoteInfo {
-	return gr.remote
+	infos := []GitRemoteInfo{}
+	for _, entry := range gr.inventory().entries {
+		seen := make(map[string]bool)
+		for _, url := range entry.FetchURLs {
+			if seen[url] {
+				continue
+			}
+			seen[url] = true
+			infos = append(infos, GitRemoteInfo{Name: entry.Name, Url: url, Fetch: true, Push: containsString(entry.PushURLs, url)})
+		}
+		for _, url := range entry.PushURLs {
+			if seen[url] {
+				continue
+			}
+			seen[url] = true
+			infos = append(infos, GitRemoteInfo{Name: entry.Name, Url: url, Push: true})
+		}
+	}
+	return infos
 }
 
 // ------------------------------------
 //
-//	Return fetch related remote only
+//	Return fetch related remote only (derived from the inventory generation)
 //
 // ------------------------------------
 func (gr *GitRemote) FetchRemote() []GitRemoteInfo {
-	return gr.fetchRemote
+	infos := []GitRemoteInfo{}
+	for _, entry := range gr.inventory().entries {
+		for _, url := range entry.FetchURLs {
+			infos = append(infos, GitRemoteInfo{Name: entry.Name, Url: url, Fetch: true})
+		}
+	}
+	return infos
 }
 
 // ------------------------------------
 //
-//	Return push related remote only
+//	Return push related remote only (derived from the inventory generation)
 //
 // ------------------------------------
 func (gr *GitRemote) PushRemote() []GitRemoteInfo {
-	return gr.pushRemote
+	infos := []GitRemoteInfo{}
+	for _, entry := range gr.inventory().entries {
+		for _, url := range entry.PushURLs {
+			infos = append(infos, GitRemoteInfo{Name: entry.Name, Url: url, Push: true})
+		}
+	}
+	return infos
+}
+
+// ------------------------------------
+//
+//	PushCapableRemoteInfos returns one info per push-capable entry in the
+//	inventory generation (the remote name with its first push URL), in the
+//	inventory's deterministic order. It is the publish and push target list:
+//	a fetch-only configured remote is never offered as a target.
+//
+// ------------------------------------
+func (gr *GitRemote) PushCapableRemoteInfos() []GitRemoteInfo {
+	infos := []GitRemoteInfo{}
+	for _, entry := range gr.inventory().entries {
+		if len(entry.PushURLs) > 0 {
+			infos = append(infos, GitRemoteInfo{Name: entry.Name, Url: entry.PushURLs[0], Push: true})
+		}
+	}
+	return infos
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 // ------------------------------------
@@ -303,76 +498,38 @@ func (gr *GitRemote) GitChangeRemoteUrl(remoteName string, newRemoteUrl string) 
 
 // ------------------------------------
 //
-//	CheckRemoteExist checks for existing remotes by running 'git remote -v'.
-//	It parses the output to identify unique remote name-URL combinations and
-//	determines if they are intended for fetching, pushing, or both.
-//	It populates the gr.remote, gr.fetchRemote, and gr.pushRemote slices accordingly.
+//	CheckRemoteExist re-reads the configured remotes through the generation's
+//	command executor and publishes one new immutable inventory generation on
+//	success. A command or parse failure returns an error and leaves the last
+//	good inventory untouched, so a failed read is never treated as "no
+//	remotes". Passive (daemon-driven) reads log only their failure; user-
+//	triggered reads also log their start.
 //
 // ------------------------------------
-func (gr *GitRemote) CheckRemoteExist(passiveRunning bool) bool {
+func (gr *GitRemote) CheckRemoteExist(passiveRunning bool) error {
 	gitArgs := []string{"remote", "-v"}
-	cmd := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
-	gitOutput, err := cmd.Output()
+	cmd := gr.cmdExecutor.RunGitCmd(gitArgs, false)
 	if !passiveRunning {
 		gr.logging.RegisterNewLog(logging.CHECK_REMOTE_OPS, strings.Join(gitArgs, " "), logging.INFO, "", true)
 	}
+	gitOutput, err := cmd.Output()
 	if err != nil {
 		if !passiveRunning {
 			gr.logging.RegisterNewLog(logging.CHECK_REMOTE_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.CHECK_REMOTE_OPS, err.Error()), true)
 		}
-		return false
+		return fmt.Errorf("reading the remote inventory: %w", err)
 	}
 
-	remotes := strings.SplitSeq(strings.TrimSpace(string(gitOutput)), "\n")
-	var remoteStruct []GitRemoteInfo
-	var fetchRemoteStruct []GitRemoteInfo
-	var pushRemoteStruct []GitRemoteInfo
-
-	uniqueRemoteMap := make(map[string]GitRemoteInfo)
-
-	for remote := range remotes {
-		remoteLinePart := strings.Fields(remote)
-		if len(remoteLinePart) < 3 {
-			continue
+	inventory, parseErr := parseRemoteInventory(gitOutput)
+	if parseErr != nil {
+		if !passiveRunning {
+			gr.logging.RegisterNewLog(logging.CHECK_REMOTE_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.CHECK_REMOTE_OPS, parseErr.Error()), true)
 		}
-
-		// check if the remote unique combination (remote name + url) already exist in the map
-		// if not create one
-		key := fmt.Sprintf("%s-%s", remoteLinePart[0], remoteLinePart[1])
-		r, ok := uniqueRemoteMap[key]
-		if !ok {
-			r = GitRemoteInfo{
-				Name:  remoteLinePart[0],
-				Url:   remoteLinePart[1],
-				Fetch: false,
-				Push:  false,
-			}
-		}
-
-		// check if the remote is fetch or push and update the info
-		typePart := strings.TrimSpace(remoteLinePart[2])
-		if typePart == "(fetch)" {
-			r.Fetch = true
-		}
-		if typePart == "(push)" {
-			r.Push = true
-		}
-		uniqueRemoteMap[key] = r
+		return parseErr
 	}
 
-	for _, r := range uniqueRemoteMap {
-		remoteStruct = append(remoteStruct, r)
-		if r.Fetch {
-			fetchRemoteStruct = append(fetchRemoteStruct, r)
-		}
-		if r.Push {
-			pushRemoteStruct = append(pushRemoteStruct, r)
-		}
-	}
-	gr.remote = remoteStruct
-	gr.fetchRemote = fetchRemoteStruct
-	gr.pushRemote = pushRemoteStruct
-	return len(gr.remote) > 0
+	gr.remoteInventory.Store(inventory)
+	return nil
 }
 
 // ------------------------------------
@@ -395,7 +552,7 @@ func (gr *GitRemote) CheckRemoteExist(passiveRunning bool) bool {
 //
 // ------------------------------------
 func (gr *GitRemote) GetLatestRemoteSyncStatusAndUpstream(publishGuard PublishGuard) error {
-	observation, observationErr := resolveUpstreamObservation(gr.logging)
+	observation, observationErr := resolveUpstreamObservation(gr.cmdExecutor, gr.logging)
 
 	if publishGuard != nil {
 		if err := publishGuard(); err != nil {

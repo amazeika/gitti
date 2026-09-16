@@ -34,13 +34,23 @@ const fakeServiceGitScript = `#!/bin/sh
 if [ -n "$FAKE_GIT_CALL_LOG" ]; then
   for a in "$@"; do
     case "$a" in
-      for-each-ref|rev-parse|rev-list|fetch|push)
+      for-each-ref|rev-parse|rev-list|config|fetch|push)
         echo "$a" >> "$FAKE_GIT_CALL_LOG"
         break
         ;;
     esac
   done
 fi
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     push)
@@ -70,6 +80,12 @@ for a in "$@"; do
       exit 0
       ;;
     remote)
+      case "$*" in
+        *"remote -v"*)
+          printf 'origin\thttps://github.com/example/repo.git (fetch)\norigin\thttps://github.com/example/repo.git (push)\n'
+          exit 0
+          ;;
+      esac
       echo "https://github.com/example/repo.git"
       exit 0
       ;;
@@ -101,6 +117,15 @@ type serviceHarness struct {
 //	are restored on cleanup.
 //
 // ------------------------------------
+// ------------------------------------
+//
+//	Build the tracked-branch push route from the model's checked-out branch
+//
+// ------------------------------------
+func pushRouteUnderTest(m *types.GittiModel) gitapi.GitPushRoute {
+	return gitapi.GitPushRoute{RemoteName: "origin", PushType: gitapi.PUSH, Branch: m.CheckOutBranch, Intent: gitapi.PushIntentPush}
+}
+
 func serviceUnderTest(t *testing.T) *serviceHarness {
 	t.Helper()
 
@@ -235,7 +260,7 @@ func TestSuccessfulBackgroundPushHoldsItsFinalSuccessUntilTheTicketCompletes(t *
 	}
 	t.Cleanup(func() { _ = os.Remove(holdFile) })
 
-	GitRemotePushService(h.model, "origin", gitapi.PUSH)
+	GitRemotePushService(h.model, pushRouteUnderTest(h.model))
 
 	popUp := h.model.PopUpModel.(*pushPopUp.GitRemotePushPopUpModel)
 	waitFor(t, 10*time.Second, popUp.IsReconciling.Load, "the popup to enter the reconciliation stage")
@@ -283,7 +308,7 @@ func TestFailedPushPublishesWithoutRequestingATicket(t *testing.T) {
 	h := serviceUnderTest(t)
 	t.Setenv("FAKE_PUSH_EXIT", "1")
 
-	GitRemotePushService(h.model, "origin", gitapi.PUSH)
+	GitRemotePushService(h.model, pushRouteUnderTest(h.model))
 
 	data := readPushResultEvent(t, h.model, 10*time.Second)
 	if data.Success {
@@ -324,7 +349,7 @@ func TestCancelledPushPublishesWithoutRequestingATicket(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Remove(h.pushHoldFile) })
 
-	GitRemotePushService(h.model, "origin", gitapi.PUSH)
+	GitRemotePushService(h.model, pushRouteUnderTest(h.model))
 
 	// let the push start, then cancel it like the user would
 	time.Sleep(200 * time.Millisecond)
@@ -489,7 +514,7 @@ func TestLinkedWorktreeFastForwardPushReconcilesToZeroAheadBehind(t *testing.T) 
 	}
 	pushPopUp.InitGitRemotePushPopUpModel(model)
 
-	GitRemotePushService(model, "origin", gitapi.PUSH)
+	GitRemotePushService(model, pushRouteUnderTest(model))
 	data := readPushResultEvent(t, model, 30*time.Second)
 
 	if !data.Success || !data.Result.Success() {

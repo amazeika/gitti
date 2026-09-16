@@ -1,7 +1,11 @@
 package nontyping
 
 import (
+	"fmt"
+
 	tea "charm.land/bubbletea/v2"
+	"github.com/gohyuhan/gitti/i18n"
+	"github.com/gohyuhan/gitti/logging"
 	"github.com/gohyuhan/gitti/tui/constant"
 	remotePopUp "github.com/gohyuhan/gitti/tui/popup/remote"
 	tagPopUp "github.com/gohyuhan/gitti/tui/popup/tag"
@@ -20,7 +24,13 @@ func handleNonTypingfKeyBindingInteraction(m *types.GittiModel) (*types.GittiMod
 	if !m.ShowPopUp.Load() {
 		if (m.CurrentSelectedComponent == constant.LocalBranchOrTagOrRemoteOrWorktreeComponentPanel || m.DetailPanelParentComponent == constant.LocalBranchOrTagOrRemoteOrWorktreeComponentPanel) &&
 			m.CurrentLocalBranchOrTagOrRemoteOrWorktreeComponentShowing == constant.SHOW_TAG {
-			if !m.GitOperations.GitRemote.CheckRemoteExist(false) {
+			if m.GitOperations.GitRemote.CheckRemoteExist(false) != nil {
+				// the remote inventory read failed: report it instead of
+				// treating the absence as "no remotes"
+				m.GittiLogger.RegisterNewLog(logging.CHECK_REMOTE_OPS, "", logging.WARN,
+					fmt.Sprintf("[%s WARN]: %s", logging.CHECK_REMOTE_OPS, i18n.LANGUAGEMAPPING.PushInventoryReadFailedWarning), false)
+				return m, nil
+			} else if len(m.GitOperations.GitRemote.Remote()) == 0 {
 				// if no remote found, we add one
 				showAddRemotePromptPopUp(m)
 			} else {

@@ -2,7 +2,7 @@
 status: in-progress
 issue: 8
 pr: null
-completed: [1]
+completed: [1, 2]
 ---
 
 # Local-Only Branch Status and Publishing — Design Document
@@ -136,7 +136,7 @@ Tracked-branch normal and force push behavior, push diagnostics, cancellation, w
 
 **ID:** `2`
 **Goal:** a user can publish the current local-only branch through one explicit normal-push path and see its upstream state reconcile immediately
-**Tests:** pending
+**Tests:** `api/daemon_test.go`, `api/daemon_publish_test.go`, `api/git/commit_test.go`, `api/git/publish_test.go`, `api/git/remote_test.go`, `tui/popup/push/push_test.go`, `tui/services/publish_integration_test.go`, `tui/services/push_service_test.go`, `tui/utils/utils_test.go`
 
 **Acceptance criteria:**
 

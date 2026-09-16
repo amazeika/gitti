@@ -423,6 +423,8 @@ func renderKeyBindingComponentPanel(width int, m *types.GittiModel) string {
 			keys = i18n.LANGUAGEMAPPING.KeyBindingForChooseRemotePopUp
 		case constant.ChoosePushTypePopUp:
 			keys = i18n.LANGUAGEMAPPING.KeyBindingForChoosePushTypePopUp
+		case constant.PublishBranchConfirmationPopUp:
+			keys = i18n.LANGUAGEMAPPING.KeyBindingForChoosePushTypePopUp
 		case constant.ChooseNewBranchTypePopUp:
 			keys = i18n.LANGUAGEMAPPING.KeyBindingForChooseNewBranchTypePopUp
 		case constant.CreateNewBranchPopUp:

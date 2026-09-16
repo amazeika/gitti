@@ -107,6 +107,12 @@ for a in "$@"; do
       exit 0
       ;;
     remote)
+      case "$*" in
+        *"remote -v"*)
+          printf 'origin\thttps://github.com/example/repo.git (fetch)\norigin\thttps://github.com/example/repo.git (push)\n'
+          exit 0
+          ;;
+      esac
       echo "https://github.com/example/repo.git"
       exit 0
       ;;

@@ -1,11 +1,15 @@
 package utils
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gohyuhan/gitti/logging"
+	"github.com/gohyuhan/gitti/tui/types"
 )
 
 // ------------------------------------
@@ -67,5 +71,55 @@ func TestBuildGitSigningExecCmdPinsTheWorkingDirectory(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(output)); got != second {
 		t.Errorf("rev-parse in the other pinned dir = %q, want %q", got, second)
+	}
+}
+
+// ------------------------------------
+//
+//	TestSigningRouteGuardRefusalNeverStartsTheSigningProcess proves the
+//	route guard runs immediately before the suspended launch: a refusal
+//	publishes the completion message with the guard's error, logs the
+//	not-started refusal, and never runs the prepared git command
+//
+// ------------------------------------
+func TestSigningRouteGuardRefusalNeverStartsTheSigningProcess(t *testing.T) {
+	repo := scratchGitRepo(t, "signing")
+	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatalf("resolving the scratch repo path: %v", err)
+	}
+
+	m := &types.GittiModel{GittiLogger: logging.InitGittiLogging(64, make(chan string, 256), 3)}
+	guardErr := errors.New("the worktree generation changed after the signing push was confirmed")
+
+	// the git command writes a marker into the repository config: if the
+	// suspended process ever ran, the marker would be present
+	_, suspended := SuspendGittiUIForGitOperationRequireSigningWithWorkdir(m,
+		[]string{"config", "user.name", "gitti-guard-marker"},
+		repo, func() error { return guardErr }, logging.GIT_PUSH_WITH_SIGNING_OPS)
+
+	msg, ok := suspended().(types.GitOperationRequiredSigningFinishedMsg)
+	if !ok {
+		t.Fatalf("the suspended command returned %T, want the signing completion message", suspended())
+	}
+	if !errors.Is(msg.Err, guardErr) {
+		t.Errorf("completion message Err() = %v, want the guard's error", msg.Err)
+	}
+	config, err := os.ReadFile(filepath.Join(repo, ".git", "config"))
+	if err != nil {
+		t.Fatalf("reading the scratch repository config: %v", err)
+	}
+	if strings.Contains(string(config), "gitti-guard-marker") {
+		t.Error("a guard refusal started the signing process")
+	}
+
+	var notStartedLogged bool
+	for _, entry := range m.GittiLogger.GetFullLogs() {
+		if entry.OpsSeverityLevel == logging.WARN && strings.Contains(entry.OpsDescription, "NOT STARTED") {
+			notStartedLogged = true
+		}
+	}
+	if !notStartedLogged {
+		t.Error("a guard refusal left no NOT STARTED log entry")
 	}
 }

@@ -98,6 +98,7 @@ func handleNonTypingEscKeyBindingInteraction(m *types.GittiModel) (*types.GittiM
 		case constant.KeybindingAndFeatureInstructionsPopUp,
 			constant.ChooseRemotePopUp,
 			constant.ChoosePushTypePopUp,
+			constant.PublishBranchConfirmationPopUp,
 			constant.ChooseNewBranchTypePopUp,
 			constant.ChooseSwitchBranchTypePopUp,
 			constant.ChooseGitPullTypePopUp,

@@ -12,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"github.com/gohyuhan/gitti/api"
 	"github.com/gohyuhan/gitti/i18n"
 	"github.com/gohyuhan/gitti/tui/constant"
 	"github.com/gohyuhan/gitti/tui/style"
@@ -50,6 +51,14 @@ type AddRemotePromptPopUpModel struct {
 type ChooseRemotePopUpModel struct {
 	RemoteList list.Model
 	Action     string
+	// ObservedBranch is the branch the daemon's upstream observation named
+	// when the publish chooser opened; the publish flow confirms that branch
+	// even if the model's checkout later changes
+	ObservedBranch string
+	// GitOperations is the captured Git-operations generation the publish
+	// flow binds its confirmed route to, so a worktree switch after the
+	// chooser opened is refused instead of published against a new worktree
+	GitOperations *api.GitOperations
 }
 
 // ------------------------------------
