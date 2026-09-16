@@ -231,6 +231,35 @@ When `HEAD` is detached, the panel omits a synthetic current-branch row and cont
 local branches. Gitti does not add a richer detached-HEAD label, and Git remains responsible for
 rejecting operations that are invalid because a branch is in use by another worktree.
 
+### Local-only branches and publishing
+
+An attached branch with commits but no configured upstream appears as **Local only** in the Git
+Status panel. This is a neutral state: the branch is healthy but has not been published. Loading,
+detached or unborn `HEAD`, and an upstream inspection failure have separate labels. In particular,
+**Upstream unavailable** means Gitti could not inspect tracking state reliably; check the log and
+retry instead of treating it as a first push.
+
+Press `p` on a **Local only** branch to open **Publish Branch**. Gitti proposes the only
+push-capable remote when there is one. With several, choose the destination first; `origin` is
+initially selected when present, but publication does not begin until you confirm it. If no remote
+is configured, `p` opens the Add Remote form with `origin` prefilled. Adding it does not publish the
+branch—press `p` again and confirm publication.
+
+First publication is always a normal push equivalent to:
+
+```text
+git push --progress --set-upstream <remote> HEAD
+```
+
+Force-push choices are intentionally unavailable until the branch is tracked. Before starting Git,
+Gitti rechecks the current branch, worktree, upstream state, and selected remote so a stale popup
+cannot publish the wrong branch or repository.
+
+After Git accepts the publication, Gitti reconciles the upstream name, ahead/behind counts, remote
+list, and Commit Log decorations from local Git state before reporting final success. This refresh
+does not fetch. If reconciliation fails, the push remains successful and the popup reports a
+separate warning.
+
 ### Push results and refresh
 
 A completed background push shows the working directory, each Git argument, the exit status, and

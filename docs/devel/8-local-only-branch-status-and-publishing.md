@@ -1,8 +1,8 @@
 ---
-status: in-progress
+status: shipped
 issue: 8
 pr: null
-completed: [1, 2, 3, 4]
+completed: [1, 2, 3, 4, 5]
 ---
 
 # Local-Only Branch Status and Publishing — Design Document
@@ -227,3 +227,40 @@ Issue #8 is delivered. Remote synchronization now uses a typed, branch-bound obs
 Pressing `p` on a matching local-only branch now opens a normal publish-only flow. Remote inventory is read atomically by configured name, multiple destinations require confirmation, and execution revalidates the worktree generation, branch, upstream state, remote, and working directory before running `git push --progress --set-upstream <remote> HEAD`. Successful publication reuses the existing no-fetch reconciliation ticket; tracked branches retain their normal and force-push choices.
 
 There were no implementation deviations, additional design decisions, scope changes, or unresolved questions. Deferred review follow-up is limited to disambiguating a branch from a same-named tag during count resolution, suppressing a stale upstream icon during branch transitions, and clearing popup state when only fetch-capable remotes exist. The Full test sweep passed `go test ./...`.
+
+## Test Instructions
+
+### Manual verification
+
+1. Start Gitti on an attached branch that has a commit but no upstream. Verify Git Status shows
+   **Local only** without an error marker in two-column, single-column, and focused modes.
+2. Press `p` with one push-capable remote. Confirm **Publish Branch**, then verify Git receives
+   `push --progress --set-upstream <remote> HEAD`; after the local refresh, verify the upstream is
+   `<remote>/<branch>`, the counts are `0↑ 0↓`, and the Commit Log shows both tips at `HEAD`.
+3. Repeat with multiple push-capable remotes. Verify `origin` is initially selected when present and
+   that no push starts until a destination is confirmed. Configure multiple push URLs for one remote
+   name and verify it remains one destination.
+4. In a repository with no remote, press `p` and add `origin`. Verify adding the remote does not push,
+   then press `p` again to publish. Force inventory inspection to fail and verify Gitti reports a
+   warning instead of opening Add Remote.
+5. Force upstream discovery and ahead/behind counting to fail separately. Verify Git Status shows
+   **Upstream unavailable**, the cause appears in the log, and publication does not start. Verify
+   detached `HEAD` and an unborn branch also cannot enter publication.
+6. Open **Publish Branch**, then switch branches or worktrees, or remove the selected remote, before
+   confirming. Verify no push starts and the popup reports that the intent is stale.
+7. On a tracked branch, press `p` and verify the normal, safe-force, and dangerous-force choices are
+   still available. After a successful push, verify the same no-fetch state reconciliation runs.
+
+### Automated verification
+
+Run the complete repository test suite:
+
+```bash
+go test ./...
+```
+
+Focused coverage is in `api/daemon_test.go`, `api/daemon_publish_test.go`,
+`api/git/commit_test.go`, `api/git/publish_test.go`, `api/git/refresh_snapshot_race_test.go`,
+`api/git/remote_test.go`, `tui/initialize/initialize_test.go`, `tui/layout/render_test.go`,
+`tui/popup/push/push_test.go`, `tui/services/publish_integration_test.go`,
+`tui/services/push_service_test.go`, and `tui/utils/utils_test.go`.
