@@ -2,7 +2,7 @@
 status: in-progress
 issue: 8
 pr: null
-completed: [1, 2]
+completed: [1, 2, 3]
 ---
 
 # Local-Only Branch Status and Publishing — Design Document
