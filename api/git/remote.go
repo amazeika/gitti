@@ -13,24 +13,30 @@ import (
 )
 
 // remoteSyncSnapshot is one immutable generation of the remote/upstream
-// local-read state: the ahead/behind counts, the upstream identity, and its
-// icon. GetLatestRemoteSyncStatusAndUpstream assembles the fresh state in
-// local variables and publishes it with one store, so a reader sees either
-// the whole prior generation or the whole new one.
+// local-read state: the typed observation state, the observed symbolic
+// branch, the ahead/behind counts, the upstream identity, and its icon.
+// GetLatestRemoteSyncStatusAndUpstream assembles the fresh state in local
+// variables and publishes it with one store, so a reader sees either the
+// whole prior generation or the whole new one. Counts and upstream identity
+// are only meaningful while the observation state is tracked.
 type remoteSyncSnapshot struct {
-	remoteSyncStatus              RemoteSyncStatus
-	upStreamRemoteIcon            string
-	currentBranchUpStream         string
-	currentBranchUpStreamWithIcon string
+	remoteSyncStatus      RemoteSyncStatus
+	upStreamRemoteIcon    string
+	currentBranchUpStream string
+	observationState      UpstreamObservationState
+	observedBranch        string
 }
 
 // RemoteSyncUpstreamSnapshot is one published generation of the
 // remote/upstream state, returned by the combined getter so a reader never
-// mixes the upstream identity, icon, and counts from two passes.
+// mixes the observation state, observed branch, upstream identity, icon, and
+// counts from two passes.
 type RemoteSyncUpstreamSnapshot struct {
 	RemoteSyncStatus      RemoteSyncStatus
 	UpStreamRemoteIcon    string
 	CurrentBranchUpStream string
+	ObservationState      UpstreamObservationState
+	ObservedBranch        string
 }
 
 type GitRemote struct {
@@ -67,7 +73,9 @@ func InitGitRemote(updateChannel chan string, gitProcessLock *GitProcessLock, lo
 		remote:         []GitRemoteInfo{},
 		logging:        logging,
 	}
-	gitRemote.remoteSync.Store(&remoteSyncSnapshot{})
+	// until the first state pass completes, the read is pending rather than
+	// a failure or an absence
+	gitRemote.remoteSync.Store(&remoteSyncSnapshot{observationState: UpstreamStatePending})
 
 	return &gitRemote
 }
@@ -138,6 +146,8 @@ func (gr *GitRemote) RemoteSyncStatusAndUpstream() RemoteSyncUpstreamSnapshot {
 		RemoteSyncStatus:      snapshot.remoteSyncStatus,
 		UpStreamRemoteIcon:    snapshot.upStreamRemoteIcon,
 		CurrentBranchUpStream: snapshot.currentBranchUpStream,
+		ObservationState:      snapshot.observationState,
+		ObservedBranch:        snapshot.observedBranch,
 	}
 }
 
@@ -368,56 +378,54 @@ func (gr *GitRemote) CheckRemoteExist(passiveRunning bool) bool {
 // ------------------------------------
 //
 //	Related to Git Remote sync status and upstream, will be call by system.
-//	This is the local read of the remote/upstream state domain: upstream
-//	identity plus the ahead/behind counts. It performs no network I/O; the
+//	This is the local read of the remote/upstream state domain: the typed
+//	upstream observation plus its matching payload (observed branch,
+//	upstream identity, ahead/behind counts). It performs no network I/O; the
 //	fetch coordinator in the daemon schedules fetches separately, and a
 //	completed fetch requests its own later pass of this read.
 //
-//	The fresh state is assembled in local variables and stored in one
-//	publication after publishGuard passes, so the upstream identity is never
-//	stored before the ahead/behind parse succeeds. A verified absent-upstream
-//	state publishes cleared upstream and counts. A failed read returns an
-//	error and keeps the last good snapshot.
+//	The fresh observation is assembled in local variables and stored in one
+//	publication after publishGuard passes, so a reader never mixes the state
+//	and payload from two generations. A successful read publishes the
+//	classified state with its matching payload. A failed current-generation
+//	read changes only the observation health to unavailable while retaining
+//	the previous payload as last-good data, and still returns the error so a
+//	caller can report the failed read. A stale generation publishes neither
+//	data nor health and returns the guard's error.
 //
 // ------------------------------------
 func (gr *GitRemote) GetLatestRemoteSyncStatusAndUpstream(publishGuard PublishGuard) error {
-	upstreamIcon, upstream, upstreamExists := hasUpstreamWithIcon()
-
-	var syncStatus RemoteSyncStatus
-	if upstreamExists {
-		gitArgs := []string{"rev-list", "--left-right", "--count", "HEAD...@{upstream}"}
-
-		remoteSyncStatusCmd := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
-		remoteSyncStatusOutput, remoteSyncStatusErr := remoteSyncStatusCmd.Output()
-		if remoteSyncStatusErr != nil {
-			gr.logging.RegisterNewLog(logging.CHECK_REMOTE_SYNC_STATUS_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.CHECK_REMOTE_SYNC_STATUS_OPS, remoteSyncStatusErr.Error()), true)
-			return remoteSyncStatusErr
-		}
-
-		parsedOutput := strings.TrimSpace(string(remoteSyncStatusOutput))
-		parts := strings.Fields(parsedOutput)
-
-		if len(parts) < 2 {
-			gr.logging.RegisterNewLog(logging.CHECK_REMOTE_SYNC_STATUS_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: Invalid output format", logging.CHECK_REMOTE_SYNC_STATUS_OPS), true)
-			return fmt.Errorf("remote sync status: invalid output format")
-		}
-
-		syncStatus = RemoteSyncStatus{
-			Local:  parts[0],
-			Remote: parts[1],
-		}
-	}
+	observation, observationErr := resolveUpstreamObservation(gr.logging)
 
 	if publishGuard != nil {
 		if err := publishGuard(); err != nil {
 			return err
 		}
 	}
+
+	if observationErr != nil {
+		// only the health changes; the previous payload stays as last-good
+		previous := gr.remoteSync.Load()
+		gr.remoteSync.Store(&remoteSyncSnapshot{
+			remoteSyncStatus:      previous.remoteSyncStatus,
+			upStreamRemoteIcon:    previous.upStreamRemoteIcon,
+			currentBranchUpStream: previous.currentBranchUpStream,
+			observationState:      UpstreamStateUnavailable,
+			observedBranch:        previous.observedBranch,
+		})
+		return observationErr
+	}
+
+	upStreamIcon := observation.UpStreamIcon
+	if upStreamIcon == "" {
+		upStreamIcon = DefaultUpStreamRemoteIcon
+	}
 	gr.remoteSync.Store(&remoteSyncSnapshot{
-		remoteSyncStatus:              syncStatus,
-		upStreamRemoteIcon:            upstreamIcon,
-		currentBranchUpStream:         upstream,
-		currentBranchUpStreamWithIcon: "",
+		remoteSyncStatus:      observation.RemoteSync,
+		upStreamRemoteIcon:    upStreamIcon,
+		currentBranchUpStream: observation.UpStream,
+		observationState:      observation.State,
+		observedBranch:        observation.Branch,
 	})
 	return nil
 }

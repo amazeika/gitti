@@ -213,9 +213,11 @@ func (gAM *GittiAppModel) View() tea.View {
 // ------------------------------------
 func (gAM *GittiAppModel) updateGitRemoteStatusSyncLineStringAndUpStream() {
 	m := gAM.model
-	// one combined read keeps the icon, upstream, and counts from a single
-	// published generation
+	// one combined read keeps the state, observed branch, icon, upstream,
+	// and counts from a single published generation
 	snapshot := m.GitOperations.GitRemote.RemoteSyncStatusAndUpstream()
+	m.RemoteSyncObservationState = snapshot.ObservationState
+	m.RemoteSyncObservedBranch = snapshot.ObservedBranch
 	m.TrackedUpstreamOrBranchIcon = snapshot.UpStreamRemoteIcon
 	m.BranchUpStream = snapshot.CurrentBranchUpStream
 	m.RemoteSyncLocalState = snapshot.RemoteSyncStatus.Local

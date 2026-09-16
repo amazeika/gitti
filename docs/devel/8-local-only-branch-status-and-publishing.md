@@ -2,7 +2,7 @@
 status: in-progress
 issue: 8
 pr: null
-completed: []
+completed: [1]
 ---
 
 # Local-Only Branch Status and Publishing — Design Document
@@ -112,7 +112,7 @@ Tracked-branch normal and force push behavior, push diagnostics, cancellation, w
 
 **ID:** `1`
 **Goal:** every repository generation presents a truthful, typed upstream state, with a local-only branch visibly distinct from loading, non-applicable, and failed inspection
-**Tests:** pending
+**Tests:** `api/daemon_test.go`, `api/git/refresh_snapshot_race_test.go`, `api/git/remote_test.go`, `tui/initialize/initialize_test.go`, `tui/layout/render_test.go`
 
 **Acceptance criteria:**
 

@@ -6,6 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/gohyuhan/gitti/api/git"
 	gitticonst "github.com/gohyuhan/gitti/constant"
 	"github.com/gohyuhan/gitti/i18n"
 	branchComponent "github.com/gohyuhan/gitti/tui/component/branch"
@@ -34,29 +35,30 @@ func renderGitStatusComponentPanel(width int, height int, m *types.GittiModel) s
 		borderStyle = style.SelectedBorderStyle
 	}
 	if m.CurrentGitRepoStatus == "" {
-		var remoteSyncStateLineString string
-		additionalWidth := 0
+		availableWidth := width - constant.ListItemOrTitleWidthPad
+		// the prefix is measured before the repo/branch portion is
+		// truncated, so the whole line always fits the panel's width budget
+		remoteSyncStateLineString := remoteSyncStatusPrefix(availableWidth, m)
+		additionalWidth := lipgloss.Width(remoteSyncStateLineString)
 
-		if m.RemoteSyncLocalState == "" || m.RemoteSyncRemoteState == "" {
-			remoteSyncStateLineString = style.ErrorStyle.Render("\uf00d")
-			additionalWidth += 1
-		} else {
-			local := style.LocalStatusStyle.Render(fmt.Sprintf("%s↑", m.RemoteSyncLocalState))
-			remote := style.RemoteStatusStyle.Render(fmt.Sprintf("%s↓", m.RemoteSyncRemoteState))
-
-			remoteSyncStateLineString = local + " " + remote
-			additionalWidth += 3 + lipgloss.Width(m.RemoteSyncLocalState) + lipgloss.Width(m.RemoteSyncRemoteState)
-		}
-
+		// the tracked payload is exposed only when the observed branch is
+		// the branch the model is actually showing, so an out-of-order
+		// branch or remote event never renders another branch's upstream
+		// or counts
+		trackedMatchesCheckedOut := m.RemoteSyncObservedBranch != "" && m.RemoteSyncObservedBranch == m.CheckOutBranch
 		trackedUpStreamOrBranchName := m.CheckOutBranch
-		if m.BranchUpStream != "" {
+		if trackedMatchesCheckedOut && m.RemoteSyncObservationState == git.UpstreamStateTracked && m.BranchUpStream != "" {
 			trackedUpStreamOrBranchName = m.BranchUpStream
 		}
 
-		repoTrackBranchName := fmt.Sprintf(" %s -> %s %s", m.RepoName, m.TrackedUpstreamOrBranchIcon, trackedUpStreamOrBranchName)
+		upStreamIcon := m.TrackedUpstreamOrBranchIcon
+		if upStreamIcon == "" {
+			upStreamIcon = git.DefaultUpStreamRemoteIcon
+		}
 
-		// the max width is the window width - padding - the length of RemoteSyncStateLineString
-		repoTrackBranchName = utils.TruncateString(repoTrackBranchName, width-constant.ListItemOrTitleWidthPad-additionalWidth)
+		repoTrackBranchName := fmt.Sprintf(" %s -> %s %s", m.RepoName, upStreamIcon, trackedUpStreamOrBranchName)
+
+		repoTrackBranchName = utils.TruncateString(repoTrackBranchName, availableWidth-additionalWidth)
 
 		return borderStyle.
 			Width(width).
@@ -72,6 +74,61 @@ func renderGitStatusComponentPanel(width int, height int, m *types.GittiModel) s
 			Height(height).
 			Render(fmt.Sprintf("%s %s", lipgloss.NewStyle().Foreground(style.ColorError).Render("!"), gitStateInProgress))
 	}
+}
+
+// ------------------------------------
+//
+//	Render the remote-sync prefix for the git status panel from the typed
+//	upstream observation state. The old empty-string inference (counts
+//	present = up to date, counts absent = not synced) is gone, so a failed
+//	read is never rendered as a first push. tracked shows the ahead/behind
+//	counters only when the observed branch matches the checked-out branch,
+//	and falls back to the pending marker on a mismatch. unpublished shows a
+//	neutral "Local only" marker for the checked-out branch only.
+//	not-applicable and pending show non-failure markers. unavailable shows
+//	an error marker with localized text instead of a stale count.
+//	The prefix is measured before the repo/branch portion is truncated.
+//	A label wider than the panel's content budget (e.g. CJK in a narrow
+//	panel) falls back to a plain truncated label, so the line always fits.
+//
+// ------------------------------------
+func remoteSyncStatusPrefix(availableWidth int, m *types.GittiModel) string {
+	var styled string
+	switch m.RemoteSyncObservationState {
+	case git.UpstreamStateTracked:
+		if m.RemoteSyncObservedBranch == "" || m.RemoteSyncObservedBranch != m.CheckOutBranch {
+			// a tracked payload from another branch renders as pending
+			// until the observation catches up
+			styled = style.NeutralStatusStyle.Render(i18n.LANGUAGEMAPPING.GitStatusPanelPending)
+			break
+		}
+		local := style.LocalStatusStyle.Render(fmt.Sprintf("%s↑", m.RemoteSyncLocalState))
+		remote := style.RemoteStatusStyle.Render(fmt.Sprintf("%s↓", m.RemoteSyncRemoteState))
+		styled = local + " " + remote
+	case git.UpstreamStateUnpublished:
+		// the Local only marker is only exposed when the observed branch is
+		// the branch the model is actually showing, so an out-of-order
+		// branch or remote event never advertises publishing for a stale
+		// state
+		if m.RemoteSyncObservedBranch != "" && m.RemoteSyncObservedBranch == m.CheckOutBranch {
+			styled = style.LocalOnlyStatusStyle.Render(i18n.LANGUAGEMAPPING.GitStatusPanelLocalOnly)
+		} else {
+			styled = style.NeutralStatusStyle.Render(i18n.LANGUAGEMAPPING.GitStatusPanelPending)
+		}
+	case git.UpstreamStateNotApplicable:
+		styled = style.NeutralStatusStyle.Render(i18n.LANGUAGEMAPPING.GitStatusPanelNotApplicable)
+	case git.UpstreamStateUnavailable:
+		marker := lipgloss.NewStyle().Foreground(style.ColorError).Render("!")
+		styled = fmt.Sprintf("%s %s", marker, style.UnavailableStatusStyle.Render(i18n.LANGUAGEMAPPING.GitStatusPanelUpstreamUnavailable))
+	case git.UpstreamStatePending:
+		styled = style.NeutralStatusStyle.Render(i18n.LANGUAGEMAPPING.GitStatusPanelPending)
+	default:
+		styled = style.NeutralStatusStyle.Render(i18n.LANGUAGEMAPPING.GitStatusPanelPending)
+	}
+	if lipgloss.Width(styled) > availableWidth {
+		return utils.TruncateString(ansi.Strip(styled), availableWidth)
+	}
+	return styled
 }
 
 // ------------------------------------
@@ -524,7 +581,13 @@ func renderKeyBindingComponentPanel(width int, m *types.GittiModel) string {
 		//-----------------------------
 		switch m.CurrentSelectedComponent {
 		case constant.GitStatusComponentPanel:
-			keys = i18n.LANGUAGEMAPPING.KeyBindingForGitStatusComponent
+			// publication is advertised only when the observation is unpublished
+			// for the branch the model is actually showing
+			if m.RemoteSyncObservationState == git.UpstreamStateUnpublished && m.RemoteSyncObservedBranch != "" && m.RemoteSyncObservedBranch == m.CheckOutBranch {
+				keys = []string{i18n.LANGUAGEMAPPING.GitStatusPanelPublishBranchHint}
+			} else {
+				keys = i18n.LANGUAGEMAPPING.KeyBindingForGitStatusComponent
+			}
 		case constant.LocalBranchOrTagOrRemoteOrWorktreeComponentPanel:
 			switch m.CurrentLocalBranchOrTagOrRemoteOrWorktreeComponentShowing {
 			case constant.SHOW_LOCAL_BRANCH:

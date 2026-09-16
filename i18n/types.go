@@ -81,6 +81,11 @@ type LanguageMapping struct {
 	GitInitRefuse                     string
 	GitInitPromptInvalidInput         string
 	GitCertainStateStillInProgress    string
+	GitStatusPanelLocalOnly           string
+	GitStatusPanelUpstreamUnavailable string
+	GitStatusPanelNotApplicable       string
+	GitStatusPanelPending             string
+	GitStatusPanelPublishBranchHint   string
 	MaxCommitLogCountSet              string
 	MaxCommitLogCountSetError         string
 	MaxRefLogCountSet                 string

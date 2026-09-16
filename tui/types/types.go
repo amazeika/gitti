@@ -33,6 +33,8 @@ type GittiModel struct {
 	CurrentGitRepoStatus                                      string
 	BranchUpStream                                            string
 	TrackedUpstreamOrBranchIcon                               string
+	RemoteSyncObservationState                                git.UpstreamObservationState
+	RemoteSyncObservedBranch                                  string
 	Width                                                     int
 	Height                                                    int
 	WindowLeftPanelWidth                                      int // this is the left part of the window

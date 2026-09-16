@@ -20,15 +20,16 @@ import (
 //
 //	fakeDaemonGitScript stands in for git so the daemon tests exercise the
 //	coordination deterministically without a repository. It answers every
-//	passive read the state passes make, honours the rev-list count/failure
-//	environment switches, and records the subcommands it is asked to run.
+//	passive read the state passes make, honours the observation environment
+//	switches (branch, upstream config, upstream resolution, rev-list
+//	count/failure), and records the subcommands it is asked to run.
 //
 // ------------------------------------
 const fakeDaemonGitScript = `#!/bin/sh
 if [ -n "$FAKE_GIT_CALL_LOG" ]; then
   for a in "$@"; do
     case "$a" in
-      for-each-ref|rev-parse|rev-list|fetch|branch|remote|log)
+      for-each-ref|rev-parse|rev-list|config|fetch|branch|remote|log)
         echo "$a" >> "$FAKE_GIT_CALL_LOG"
         break
         ;;
@@ -46,7 +47,42 @@ for a in "$@"; do
       exit 0
       ;;
     rev-parse)
+      case "$*" in
+        *"--abbrev-ref HEAD"*)
+          if [ -n "$FAKE_HEAD_RESOLVE_FAIL" ]; then
+            echo "fatal: this operation must be run in a work tree" >&2
+            exit 128
+          fi
+          echo "${FAKE_HEAD_BRANCH:-master}"
+          exit 0
+          ;;
+        *"--verify --quiet HEAD"*)
+          if [ -n "$FAKE_UNBORN_HEAD" ]; then
+            exit 1
+          fi
+          exit 0
+          ;;
+        *--abbrev-ref*)
+          if [ -n "$FAKE_UPSTREAM_RESOLVE_FAIL" ]; then
+            echo "fatal: no upstream configured for branch 'master'" >&2
+            exit 128
+          fi
+          echo "origin/master"
+          exit 0
+          ;;
+      esac
       echo "origin/master"
+      exit 0
+      ;;
+    config)
+      if [ -n "$FAKE_CONFIG_FAIL" ]; then
+        echo "fatal: unable to read 'master'" >&2
+        exit 128
+      fi
+      if [ -n "$FAKE_CONFIG_UNSET" ]; then
+        exit 1
+      fi
+      echo "origin"
       exit 0
       ;;
     rev-list)
@@ -54,10 +90,19 @@ for a in "$@"; do
         echo "fatal: ambiguous argument" >&2
         exit 128
       fi
+      if [ -n "$FAKE_REVLIST_BAD_OUTPUT" ]; then
+        echo "not-a-count"
+        exit 0
+      fi
       echo "${FAKE_REVLIST_COUNT:-0 0}"
       exit 0
       ;;
     branch)
+      if [ -n "$FAKE_BRANCH_BARRIER" ]; then
+        while [ ! -e "$FAKE_BRANCH_BARRIER" ]; do
+          sleep 0.01
+        done
+      fi
       echo "  origin/master"
       exit 0
       ;;
@@ -877,13 +922,62 @@ func TestStaleWorktreeGenerationIsRejectedAtPublication(t *testing.T) {
 
 // ------------------------------------
 //
-//	TestFailedRemoteReadPreservesLastGoodState proves a failed remote/upstream
-//	read keeps the last good upstream and ahead/behind snapshots, emits no
-//	event, and the ticket names the failed domain without relabeling the
-//	other domains.
+//	TestStaleWorktreeSwitchBetweenRemoteSubReadsSuppressesTheUpdate covers
+//	the worktree switch that lands after the successful sync sub-read and
+//	before the remote branch sub-read completes: the failure-path update is
+//	still suppressed, and the pass reports the joined stale-generation
+//	failure
 //
 // ------------------------------------
-func TestFailedRemoteReadPreservesLastGoodState(t *testing.T) {
+func TestStaleWorktreeSwitchBetweenRemoteSubReadsSuppressesTheUpdate(t *testing.T) {
+	h := daemonUnderTest(t, 0)
+
+	// the fake git's branch list read waits for the barrier file, so the
+	// worktree switch lands between the two remote-domain sub-reads
+	barrier := filepath.Join(t.TempDir(), "branch-barrier")
+	t.Setenv("FAKE_BRANCH_BARRIER", barrier)
+
+	remoteEventsBefore := h.events.count(gitapi.GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE)
+
+	h.gd.requestStatePass(&h.gd.remoteUpstreamStateDomain)
+	waitFor(t, 5*time.Second, func() bool { return h.countCalls(t, "branch") >= 1 }, "the remote branch sub-read to block on the barrier")
+
+	newOps := InitGitOperations(t.TempDir(), t.TempDir(), make(chan string, 64), h.logging)
+	h.gd.UpdateGitOperations(newOps)
+	t.Cleanup(func() { h.gd.UpdateGitOperations(h.gitOps) })
+
+	if err := os.WriteFile(barrier, []byte("go\n"), 0o644); err != nil {
+		t.Fatalf("releasing the barrier: %v", err)
+	}
+	waitFor(t, 5*time.Second, func() bool {
+		return h.gd.remoteUpstreamStateDomain.completedGeneration() >= 1
+	}, "the stale remote pass to complete")
+
+	if got := h.events.count(gitapi.GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE); got != remoteEventsBefore {
+		t.Errorf("the stale remote pass emitted %d update events, want none", got-remoteEventsBefore)
+	}
+	staleLogged := false
+	for _, item := range h.logging.GetFullLogs() {
+		if strings.Contains(item.OpsDescription, "state refresh for remote/upstream failed") &&
+			strings.Contains(item.OpsDescription, "worktree generation changed") {
+			staleLogged = true
+		}
+	}
+	if !staleLogged {
+		t.Error("the stale remote pass did not log the joined stale-generation failure")
+	}
+}
+
+// ------------------------------------
+//
+//	TestFailedRemoteReadPublishesUnavailablePreservingLastGoodState proves a
+//	failed remote/upstream read changes only the observation health to
+//	unavailable while keeping the last good upstream and ahead/behind
+//	payload, emits the current-generation update for that health, and the
+//	ticket names the failed domain without relabeling the other domains.
+//
+// ------------------------------------
+func TestFailedRemoteReadPublishesUnavailablePreservingLastGoodState(t *testing.T) {
 	h := daemonUnderTest(t, 0)
 
 	t.Setenv("FAKE_REVLIST_COUNT", "2 0")
@@ -900,6 +994,9 @@ func TestFailedRemoteReadPreservesLastGoodState(t *testing.T) {
 		t.Fatalf("baseline upstream = %q, want origin/master", upstreamBefore)
 	}
 	iconBefore := h.gitOps.GitRemote.UpStreamRemoteIcon()
+	if baseline := h.gitOps.GitRemote.RemoteSyncStatusAndUpstream(); baseline.ObservationState != gitapi.UpstreamStateTracked || baseline.ObservedBranch != "master" {
+		t.Fatalf("baseline observation = %s/%s, want tracked/master", baseline.ObservationState, baseline.ObservedBranch)
+	}
 	remoteEventsBefore := h.events.count(gitapi.GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE)
 
 	t.Setenv("FAKE_REVLIST_FAIL", "1")
@@ -912,6 +1009,10 @@ func TestFailedRemoteReadPreservesLastGoodState(t *testing.T) {
 	if len(result.FailedDomains) != 1 || result.FailedDomains[0] != statePassDomainRemoteUpstream {
 		t.Errorf("failed domains = %v, want only the remote/upstream domain", result.FailedDomains)
 	}
+	snapshot := h.gitOps.GitRemote.RemoteSyncStatusAndUpstream()
+	if snapshot.ObservationState != gitapi.UpstreamStateUnavailable {
+		t.Errorf("the failed read did not publish the unavailable health: %s", snapshot.ObservationState)
+	}
 	if status := h.gitOps.GitRemote.RemoteSyncStatus(); status != (gitapi.RemoteSyncStatus{Local: "2", Remote: "0"}) {
 		t.Errorf("the failed read overwrote the last good sync status: %v", status)
 	}
@@ -921,12 +1022,72 @@ func TestFailedRemoteReadPreservesLastGoodState(t *testing.T) {
 	if got := h.gitOps.GitRemote.UpStreamRemoteIcon(); got != iconBefore {
 		t.Error("the failed read overwrote the last good upstream icon")
 	}
-	if got := h.events.count(gitapi.GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE); got != remoteEventsBefore {
-		t.Error("the failed remote pass emitted an update event")
+	if got := h.gitOps.GitRemote.RemoteSyncStatusAndUpstream().ObservedBranch; got != "master" {
+		t.Errorf("the failed read overwrote the last good observed branch: %q", got)
+	}
+	// the failed current-generation read published its unavailable health,
+	// which the UI must be told about
+	waitFor(t, 5*time.Second, func() bool {
+		return h.events.count(gitapi.GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE) == remoteEventsBefore+1
+	}, "the unavailable health update")
+	if got := h.events.count(gitapi.GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE); got != remoteEventsBefore+1 {
+		t.Errorf("failed remote pass emitted %d update events, want exactly one for the unavailable health", got-remoteEventsBefore)
 	}
 	// the healthy domains still published their newer state
+	waitFor(t, 5*time.Second, func() bool {
+		return h.events.count(gitapi.GIT_BRANCH_UPDATE) > 0 && h.events.count(gitapi.GIT_COMMITLOG_UPDATE) > 0
+	}, "the healthy domain updates")
 	if h.events.count(gitapi.GIT_BRANCH_UPDATE) == 0 || h.events.count(gitapi.GIT_COMMITLOG_UPDATE) == 0 {
 		t.Error("the healthy domains did not publish their state")
+	}
+}
+
+// ------------------------------------
+//
+//	TestUnpublishedBranchReadPublishesLocalOnlyState proves a branch without
+//	a configured upstream publishes the unpublished state with the observed
+//	branch and cleared counts, recovers to tracked once the upstream is
+//	configured, and emits an update for each generation change.
+//
+// ------------------------------------
+func TestUnpublishedBranchReadPublishesLocalOnlyState(t *testing.T) {
+	h := daemonUnderTest(t, 0)
+
+	t.Setenv("FAKE_CONFIG_UNSET", "1")
+	h.gd.requestStatePass(&h.gd.remoteUpstreamStateDomain)
+	waitFor(t, 5*time.Second, func() bool {
+		return h.gd.remoteUpstreamStateDomain.completedGeneration() >= 1 &&
+			h.events.count(gitapi.GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE) >= 1
+	}, "the unpublished remote pass")
+
+	snapshot := h.gitOps.GitRemote.RemoteSyncStatusAndUpstream()
+	if snapshot.ObservationState != gitapi.UpstreamStateUnpublished {
+		t.Fatalf("observation state = %s, want unpublished", snapshot.ObservationState)
+	}
+	if snapshot.ObservedBranch != "master" {
+		t.Errorf("observed branch = %q, want master", snapshot.ObservedBranch)
+	}
+	if snapshot.CurrentBranchUpStream != "" {
+		t.Errorf("the unpublished observation carries an upstream: %q", snapshot.CurrentBranchUpStream)
+	}
+	if snapshot.RemoteSyncStatus != (gitapi.RemoteSyncStatus{}) {
+		t.Errorf("the unpublished observation carries counts: %v", snapshot.RemoteSyncStatus)
+	}
+
+	t.Setenv("FAKE_CONFIG_UNSET", "")
+	t.Setenv("FAKE_REVLIST_COUNT", "1 3")
+	h.gd.requestStatePass(&h.gd.remoteUpstreamStateDomain)
+	waitFor(t, 5*time.Second, func() bool {
+		s := h.gitOps.GitRemote.RemoteSyncStatusAndUpstream()
+		return s.ObservationState == gitapi.UpstreamStateTracked
+	}, "the recovery remote pass")
+
+	recovered := h.gitOps.GitRemote.RemoteSyncStatusAndUpstream()
+	if recovered.ObservedBranch != "master" || recovered.CurrentBranchUpStream != "origin/master" {
+		t.Errorf("recovered observation = %s/%s, want master/origin/master", recovered.ObservedBranch, recovered.CurrentBranchUpStream)
+	}
+	if recovered.RemoteSyncStatus != (gitapi.RemoteSyncStatus{Local: "1", Remote: "3"}) {
+		t.Errorf("recovered counts = %v, want 1 3", recovered.RemoteSyncStatus)
 	}
 }
 

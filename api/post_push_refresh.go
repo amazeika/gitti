@@ -196,12 +196,18 @@ func (gd *GitDaemon) runBranchStatePass(ops *GitOperations) error {
 
 // ------------------------------------
 //
-//	runRemoteUpstreamStatePass performs the remote/upstream local read:
-//	upstream identity plus ahead/behind counts, then the remote branch list.
-//	It performs no network I/O and never waits for one. Each sub-read
-//	publishes its own complete snapshot, so a sub-read failure preserves that
-//	sub-read's last good state while the successful sub-read may still
-//	publish; the pass as a whole reports the joined failure.
+//	runRemoteUpstreamStatePass performs the remote/upstream local read: the
+//	typed upstream observation plus its matching payload, then the remote
+//	branch list. It performs no network I/O and never waits for one. Each
+//	sub-read publishes its own complete snapshot, so a sub-read failure
+//	preserves that sub-read's last good state while the successful sub-read
+//	may still publish; the pass as a whole reports the joined failure.
+//
+//	When the remote/upstream read fails for the current generation it has
+//	published the unavailable health of that generation, and the pass emits
+//	the TUI update for it even if the other sub-read failed. The generation
+//	is re-checked before that failure-path update. A stale-generation read
+//	publishes nothing and the pass emits nothing.
 //
 // ------------------------------------
 func (gd *GitDaemon) runRemoteUpstreamStatePass(ops *GitOperations) error {
@@ -209,15 +215,33 @@ func (gd *GitDaemon) runRemoteUpstreamStatePass(ops *GitOperations) error {
 		(*hook)()
 	}
 	var readErrs []error
-	if err := ops.GitRemote.GetLatestRemoteSyncStatusAndUpstream(gd.worktreeGenerationGuard(ops)); err != nil {
-		readErrs = append(readErrs, err)
+	syncErr := ops.GitRemote.GetLatestRemoteSyncStatusAndUpstream(gd.worktreeGenerationGuard(ops))
+	if syncErr != nil {
+		readErrs = append(readErrs, syncErr)
 	}
 	if err := ops.GitBranch.GetLatestRemoteBranchesInfo(gd.worktreeGenerationGuard(ops)); err != nil {
 		readErrs = append(readErrs, err)
 	}
+
+	// a failed read publishes the current generation's unavailable health
+	// unless the worktree generation went stale, in which case it published
+	// nothing
+	healthPublished := syncErr == nil || !errors.Is(syncErr, errStaleWorktreeGeneration)
+
 	if len(readErrs) > 0 {
 		passErr := errors.Join(readErrs...)
+		// the successful sub-read may have published before the worktree
+		// moved, so the generation is re-checked before the failure-path
+		// update is emitted
+		if genErr := gd.assertWorktreeGeneration(ops); genErr != nil {
+			passErr = errors.Join(passErr, genErr)
+			gd.logStatePassFailure(statePassDomainRemoteUpstream, passErr)
+			return passErr
+		}
 		gd.logStatePassFailure(statePassDomainRemoteUpstream, passErr)
+		if healthPublished {
+			gd.updateChannel <- git.GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE
+		}
 		return passErr
 	}
 	if err := gd.assertWorktreeGeneration(ops); err != nil {

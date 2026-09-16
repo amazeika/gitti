@@ -3,6 +3,7 @@ package initialize
 import (
 	"testing"
 
+	"github.com/gohyuhan/gitti/api/git"
 	"github.com/gohyuhan/gitti/executor"
 	"github.com/gohyuhan/gitti/logging"
 	"github.com/gohyuhan/gitti/settings"
@@ -30,6 +31,14 @@ func TestInitGittiModelStartsInTwoColumnMode(t *testing.T) {
 	if model.ScreenMode != constant.ScreenModeTwoColumn {
 		t.Errorf("ScreenMode = %d, want ScreenModeTwoColumn", model.ScreenMode)
 	}
+	// before the first remote read the observation is pending, never a
+	// guessed absence
+	if model.RemoteSyncObservationState != git.UpstreamStatePending {
+		t.Errorf("RemoteSyncObservationState = %s, want pending", model.RemoteSyncObservationState)
+	}
+	if model.RemoteSyncObservedBranch != "" {
+		t.Errorf("RemoteSyncObservedBranch = %q, want empty", model.RemoteSyncObservedBranch)
+	}
 }
 
 func TestReinitGittiModelPreservesRuntimeScreenState(t *testing.T) {
@@ -50,6 +59,19 @@ func TestReinitGittiModelPreservesRuntimeScreenState(t *testing.T) {
 	}
 	if model.CurrentSelectedComponent != constant.ModifiedFilesComponentPanel {
 		t.Errorf("CurrentSelectedComponent = %q, want reset Modified Files component", model.CurrentSelectedComponent)
+	}
+
+	// the worktree switch drops the previous worktree's observation back to
+	// pending rather than carrying it into the new one
+	model.RemoteSyncObservationState = git.UpstreamStateTracked
+	model.RemoteSyncObservedBranch = "master"
+	ReinitGittiModel(model, "/new", "new", nil)
+
+	if model.RemoteSyncObservationState != git.UpstreamStatePending {
+		t.Errorf("RemoteSyncObservationState = %s, want reset pending", model.RemoteSyncObservationState)
+	}
+	if model.RemoteSyncObservedBranch != "" {
+		t.Errorf("RemoteSyncObservedBranch = %q, want reset empty", model.RemoteSyncObservedBranch)
 	}
 }
 
