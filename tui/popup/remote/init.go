@@ -5,6 +5,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 
+	"github.com/gohyuhan/gitti/api"
 	"github.com/gohyuhan/gitti/api/git"
 	"github.com/gohyuhan/gitti/i18n"
 	"github.com/gohyuhan/gitti/tui/constant"
@@ -78,6 +79,46 @@ func InitChooseRemotePopUpModel(m *types.GittiModel, remoteList []git.GitRemoteI
 	m.PopUpModel = &ChooseRemotePopUpModel{
 		RemoteList: rL,
 		Action:     action,
+	}
+}
+
+// ------------------------------------
+//
+//	Initialize the choose-remote popup model for a publish: populates a list
+//	with the push-capable remotes, marks it as the publish action so the
+//	confirmation popup opens next, and preselects origin when it is present
+//	in the list. The captured observed branch and Git-operations generation
+//	carry into the confirmation popup, so the publish flow works from what
+//	was observed when the chooser opened.
+//
+// ------------------------------------
+func InitChooseRemotePopUpModelForPublish(m *types.GittiModel, remoteList []git.GitRemoteInfo, observedBranch string, gitOperations *api.GitOperations) {
+	items := make([]list.Item, 0, len(remoteList))
+	for _, remote := range remoteList {
+		items = append(items, GitRemoteItem(remote))
+	}
+	width := (min(constant.MaxChooseRemotePopUpWidth, int(float64(m.Width)*0.8)) - 4)
+	rL := list.New(items, GitRemoteItemDelegate{}, width, constant.PopUpChooseRemoteHeight)
+	rL.SetShowPagination(false)
+	rL.SetShowStatusBar(false)
+	rL.SetFilteringEnabled(false)
+	rL.SetShowHelp(false)
+	rL.SetShowTitle(false)
+
+	// origin is the conventional first publish target, so preselect it when
+	// the list carries it
+	for index, item := range items {
+		if item.(GitRemoteItem).Name == "origin" {
+			rL.Select(index)
+			break
+		}
+	}
+
+	m.PopUpModel = &ChooseRemotePopUpModel{
+		RemoteList:     rL,
+		Action:         constant.PUBLISHACTION,
+		ObservedBranch: observedBranch,
+		GitOperations:  gitOperations,
 	}
 }
 

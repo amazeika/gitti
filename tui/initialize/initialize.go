@@ -81,6 +81,8 @@ func InitGittiModel(tuiUpdateChannel chan interface{}, repoPath string, repoName
 		CurrentGitRepoStatus:                                      "",
 		BranchUpStream:                                            "",
 		TrackedUpstreamOrBranchIcon:                               "",
+		RemoteSyncObservationState:                                git.UpstreamStatePending,
+		RemoteSyncObservedBranch:                                  "",
 		Width:                                                     0,
 		Height:                                                    0,
 		WindowLeftPanelRatio:                                      settings.GITTICONFIGSETTINGS.LeftPanelWidthRatio,
@@ -184,6 +186,8 @@ func ReinitGittiModel(m *types.GittiModel, repoPath string, repoName string, git
 	m.CurrentGitRepoStatus = ""
 	m.BranchUpStream = ""
 	m.TrackedUpstreamOrBranchIcon = ""
+	m.RemoteSyncObservationState = git.UpstreamStatePending
+	m.RemoteSyncObservedBranch = ""
 	m.WindowLeftPanelRatio = settings.GITTICONFIGSETTINGS.LeftPanelWidthRatio
 	m.CurrentRepoBranchesInfoList = list.New([]list.Item{}, branchComponent.GitBranchItemDelegate{}, 0, 0)
 	m.CurrentRepoTagInfoList = list.New([]list.Item{}, tagComponent.GitTagItemDelegate{}, 0, 0)

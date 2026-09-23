@@ -39,6 +39,15 @@ func fakeGitOnPath(t *testing.T, script string) {
 //	model, the push handler, its process lock, and its logging
 //
 // ------------------------------------
+// ------------------------------------
+//
+//	Build the tracked-branch push route the popup tests confirm
+//
+// ------------------------------------
+func pushRouteUnderTest(branch string) gitapi.GitPushRoute {
+	return gitapi.GitPushRoute{RemoteName: "origin", PushType: gitapi.PUSH, Branch: branch, Intent: gitapi.PushIntentPush}
+}
+
 func pushPopupModelUnderTest(t *testing.T, script string) (*types.GittiModel, *gitapi.GitCommit, *gitapi.GitProcessLock, *logging.GittiLogging, string) {
 	t.Helper()
 
@@ -52,7 +61,7 @@ func pushPopupModelUnderTest(t *testing.T, script string) (*types.GittiModel, *g
 
 	gittiLogging := logging.InitGittiLogging(64, make(chan string, 256), 3)
 	processLock := gitapi.InitGitProcessLock(gittiLogging)
-	gitCommit := gitapi.InitGitCommit(make(chan string, 16), processLock, gittiLogging)
+	gitCommit := gitapi.InitGitCommit(make(chan string, 16), processLock, executor.GittiCmdExecutor, gittiLogging)
 
 	model := &types.GittiModel{
 		Width:         100,
@@ -106,9 +115,20 @@ func unpadView(view string) string {
 
 func TestCompletedPopUpRendersCwdQuotedArgvStatusAndSeparateStreams(t *testing.T) {
 	model, gitCommit, _, _, root := pushPopupModelUnderTest(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push)
       echo "hello-stdout"
       echo "hello-stderr" >&2
@@ -118,7 +138,7 @@ done
 exit 0
 `)
 
-	result := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	if !result.Success() {
 		t.Fatalf("the scripted push did not succeed: exit %d, err %v", result.ExitCode(), result.Err())
 	}
@@ -163,16 +183,27 @@ exit 0
 
 func TestCompletedPopUpShowsActionableTextForANonZeroExit(t *testing.T) {
 	model, gitCommit, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push) echo "error: failed to push some refs" >&2; exit 1 ;;
   esac
 done
 exit 0
 `)
 
-	result := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	popUp := publishPushResult(t, model, result)
 
 	if !popUp.HasError.Load() || popUp.ProcessSuccess.Load() {
@@ -203,7 +234,7 @@ exit 0
 	}
 	defer processLock.ReleaseGitOpsLock()
 
-	result := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	popUp := publishPushResult(t, model, result)
 
 	if !popUp.HasError.Load() || popUp.ProcessSuccess.Load() {
@@ -224,16 +255,27 @@ exit 0
 
 func TestCompletedPopUpShowsExplicitMarkersForEmptyStreams(t *testing.T) {
 	model, gitCommit, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push) exit 0 ;;
   esac
 done
 exit 0
 `)
 
-	result := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	popUp := publishPushResult(t, model, result)
 
 	view := unpadView(popUp.GitRemotePushOutputViewport.View())
@@ -246,16 +288,27 @@ exit 0
 
 func TestCancelledResultNeverMutatesAClosedPopUp(t *testing.T) {
 	model, gitCommit, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push) echo "error: failed" >&2; exit 1 ;;
   esac
 done
 exit 0
 `)
 
-	result := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 
 	// The user closed the popup; the cancel service cleared it and flagged it.
 	popUp := model.PopUpModel.(*GitRemotePushPopUpModel)
@@ -281,9 +334,20 @@ exit 0
 
 func TestSecondPushDoesNotDisplayTheFirstAttempt(t *testing.T) {
 	model, gitCommit, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push)
       if [ -n "$FAKE_GIT_TAG" ]; then echo "$FAKE_GIT_TAG" >&2; fi
       exit "${FAKE_GIT_EXIT:-0}"
@@ -295,7 +359,7 @@ exit 0
 
 	t.Setenv("FAKE_GIT_TAG", "FIRST-ATTEMPT")
 	t.Setenv("FAKE_GIT_EXIT", "1")
-	first := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	first := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	publishPushResult(t, model, first)
 	if view := model.PopUpModel.(*GitRemotePushPopUpModel).GitRemotePushOutputViewport.View(); !strings.Contains(view, "FIRST-ATTEMPT") {
 		t.Fatalf("first attempt diagnostics missing from the popup: %q", view)
@@ -316,7 +380,7 @@ exit 0
 
 	t.Setenv("FAKE_GIT_TAG", "SECOND-ATTEMPT")
 	t.Setenv("FAKE_GIT_EXIT", "0")
-	second := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	second := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	publishPushResult(t, model, second)
 
 	view := unpadView(model.PopUpModel.(*GitRemotePushPopUpModel).GitRemotePushOutputViewport.View())
@@ -342,9 +406,20 @@ func TestBuildGitRemotePushLiveOutputTagsStreamsOnlyWhenBothAreUsed(t *testing.T
 
 func TestQueuedProgressAfterCompletionDoesNotEraseDiagnostics(t *testing.T) {
 	model, gitCommit, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push)
       echo "hello-stdout"
       echo "hello-stderr" >&2
@@ -354,7 +429,7 @@ done
 exit 0
 `)
 
-	result := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	if !result.Success() {
 		t.Fatalf("the scripted push did not succeed: exit %d, err %v", result.ExitCode(), result.Err())
 	}
@@ -379,9 +454,20 @@ exit 0
 
 func TestQueuedProgressAfterCancellationDoesNotMutateAClosedPopUp(t *testing.T) {
 	model, gitCommit, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push) echo "queued-progress-line" ;;
   esac
 done
@@ -389,7 +475,7 @@ exit 0
 `)
 
 	// A push runs, leaving lines in the live progress buffer.
-	result := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	if !result.Success() {
 		t.Fatalf("the scripted push did not succeed: exit %d, err %v", result.ExitCode(), result.Err())
 	}
@@ -416,9 +502,20 @@ exit 0
 
 func TestLateResultFromACancelledAttemptCannotOverwriteANewPush(t *testing.T) {
 	model, gitCommit, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push)
       if [ -n "$FAKE_GIT_TAG" ]; then echo "$FAKE_GIT_TAG" >&2; fi
       exit "${FAKE_GIT_EXIT:-0}"
@@ -434,7 +531,7 @@ exit 0
 	popUp.IsProcessing.Store(true)
 	t.Setenv("FAKE_GIT_TAG", "ATTEMPT-A")
 	t.Setenv("FAKE_GIT_EXIT", "1")
-	resultA := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	resultA := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	popUp.IsCancelled.Store(true)
 	ResetGitRemotePushPopUpDiagnostics(popUp)
 	popUp.IsProcessing.Store(false)
@@ -446,7 +543,7 @@ exit 0
 	ResetGitRemotePushPopUpDiagnostics(popUp)
 	t.Setenv("FAKE_GIT_TAG", "ATTEMPT-B")
 	t.Setenv("FAKE_GIT_EXIT", "0")
-	resultB := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	resultB := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 
 	// B's result is delivered and accepted.
 	UpdateGitPushResultEvent(model, types.GitPushResultEventDataStructure{Success: resultB.Success(), Result: resultB, Attempt: attemptB})
@@ -481,9 +578,20 @@ exit 0
 // ------------------------------------
 func TestLateResultCannotOverwriteAReconstructedPopUpsAttempt(t *testing.T) {
 	model, gitCommit, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push)
       if [ -n "$FAKE_GIT_TAG" ]; then echo "$FAKE_GIT_TAG" >&2; fi
       exit "${FAKE_GIT_EXIT:-0}"
@@ -500,7 +608,7 @@ exit 0
 	firstPopUp.IsProcessing.Store(true)
 	t.Setenv("FAKE_GIT_TAG", "ATTEMPT-A")
 	t.Setenv("FAKE_GIT_EXIT", "1")
-	resultA := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	resultA := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	firstPopUp.IsCancelled.Store(true)
 	ResetGitRemotePushPopUpDiagnostics(firstPopUp)
 	firstPopUp.IsProcessing.Store(false)
@@ -523,7 +631,7 @@ exit 0
 	secondPopUp.IsProcessing.Store(true)
 	t.Setenv("FAKE_GIT_TAG", "ATTEMPT-B")
 	t.Setenv("FAKE_GIT_EXIT", "0")
-	resultB := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	resultB := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	publishPushResult(t, model, resultB)
 	if view := unpadView(secondPopUp.GitRemotePushOutputViewport.View()); !strings.Contains(view, "ATTEMPT-B") {
 		t.Fatalf("attempt B's result was not displayed: %q", view)
@@ -594,16 +702,27 @@ exit 0
 // ------------------------------------
 func TestCompletedPopUpShowsReconciledRefreshOutcome(t *testing.T) {
 	model, gitCommit, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push) exit 0 ;;
   esac
 done
 exit 0
 `)
 
-	result := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	if !result.Success() {
 		t.Fatalf("the scripted push did not succeed: exit %d, err %v", result.ExitCode(), result.Err())
 	}
@@ -637,16 +756,27 @@ exit 0
 // ------------------------------------
 func TestCompletedPopUpShowsRefreshWarningWithoutFailingThePush(t *testing.T) {
 	model, gitCommit, _, _, _ := pushPopupModelUnderTest(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*)
+    echo "master"
+    exit 0
+    ;;
+  *"config --get"*)
+    echo "origin"
+    exit 0
+    ;;
+esac
 for a in "$@"; do
   case "$a" in
     rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
     push) exit 0 ;;
   esac
 done
 exit 0
 `)
 
-	result := gitCommit.GitPush(context.Background(), "origin", gitapi.PUSH, "master")
+	result := gitCommit.GitPush(context.Background(), pushRouteUnderTest("master"))
 	if !result.Success() {
 		t.Fatalf("the scripted push did not succeed: exit %d, err %v", result.ExitCode(), result.Err())
 	}

@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/gohyuhan/gitti/api"
+	"github.com/gohyuhan/gitti/api/git"
 	"github.com/gohyuhan/gitti/logging"
 	"github.com/gohyuhan/gitti/tui/constant"
 	pushPopUp "github.com/gohyuhan/gitti/tui/popup/push"
@@ -15,12 +16,14 @@ import (
 // services was to bridge api and the needs of the terminal interface logic so that it can be compatible and feels smooth and not clunky
 // ------------------------------------
 //
-//	For Git Remote Push
+//	GitRemotePushService runs the confirmed push or publish route in the
+//	background. The route carries the remote, push type, branch, intent, and
+//	the worktree-generation execution guard, so the service never re-derives
+//	target state at run time.
 //
 // ------------------------------------
-func GitRemotePushService(m *types.GittiModel, remoteName string, pushType string) {
+func GitRemotePushService(m *types.GittiModel, route git.GitPushRoute) {
 	popUp, ok := m.PopUpModel.(*pushPopUp.GitRemotePushPopUpModel)
-	checkoutBranch := m.CheckOutBranch
 	if ok {
 		ctx, cancel := context.WithCancel(context.Background())
 		popUp.CancelFunc = cancel
@@ -43,7 +46,7 @@ func GitRemotePushService(m *types.GittiModel, remoteName string, pushType strin
 		go func(ctx context.Context) {
 			defer cancel()
 
-			result := gitOperations.GitCommit.GitPush(ctx, remoteName, pushType, checkoutBranch)
+			result := gitOperations.GitCommit.GitPush(ctx, route)
 			if !result.Success() {
 				// A failed, unstarted, or cancelled push publishes its final
 				// result and never requests the success-only reconciliation
@@ -114,7 +117,7 @@ func GitRemotePushCancelService(m *types.GittiModel) {
 //	Initialize the push pop-up model and start the push operation
 //
 // ------------------------------------
-func InitGitRemotePushPopUpModelAndStartGitRemotePushService(m *types.GittiModel, remoteName string, pushType string) (*types.GittiModel, tea.Cmd) {
+func InitGitRemotePushPopUpModelAndStartGitRemotePushService(m *types.GittiModel, route git.GitPushRoute) (*types.GittiModel, tea.Cmd) {
 	m.GitOperations.GitCommit.ClearGitRemotePushOutput()
 	if popUp, ok := m.PopUpModel.(*pushPopUp.GitRemotePushPopUpModel); !ok {
 		pushPopUp.InitGitRemotePushPopUpModel(m)
@@ -122,7 +125,7 @@ func InitGitRemotePushPopUpModelAndStartGitRemotePushService(m *types.GittiModel
 		pushPopUp.ResetGitRemotePushPopUpDiagnostics(popUp)
 	}
 	// then push it after init the git remote push pop up model
-	GitRemotePushService(m, remoteName, pushType)
+	GitRemotePushService(m, route)
 	// Start spinner ticking
 	if pushPopup, ok := m.PopUpModel.(*pushPopUp.GitRemotePushPopUpModel); ok {
 		return m, pushPopup.Spinner.Tick

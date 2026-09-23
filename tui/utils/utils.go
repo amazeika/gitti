@@ -262,8 +262,12 @@ func SuspendGittiUIForGitOperationRequireSigning(m *types.GittiModel, gitCommand
 //	repository path). Terminal output stays directly visible; the completion
 //	message carries the operation identity and success information.
 //
+//	The route guard, when non-nil, runs immediately before the suspended git
+//	launch. A refusal never starts git: the completion message is published
+//	with the guard's error, and no post-push reconciliation is requested.
+//
 // ------------------------------------
-func SuspendGittiUIForGitOperationRequireSigningWithWorkdir(m *types.GittiModel, gitCommand []string, workingDir string, GitOperationOpsTypeForLogging string) (*types.GittiModel, tea.Cmd) {
+func SuspendGittiUIForGitOperationRequireSigningWithWorkdir(m *types.GittiModel, gitCommand []string, workingDir string, routeGuard git.PublishGuard, GitOperationOpsTypeForLogging string) (*types.GittiModel, tea.Cmd) {
 	cmd := buildGitSigningExecCmd(gitCommand, workingDir)
 	var stderr bytes.Buffer
 	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
@@ -273,11 +277,23 @@ func SuspendGittiUIForGitOperationRequireSigningWithWorkdir(m *types.GittiModel,
 	// ran the signing command
 	gitOperations := m.GitOperations
 	m.GittiLogger.RegisterNewLog(GitOperationOpsTypeForLogging, strings.Join(gitCommand, " "), logging.INFO, "", true)
-	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+	execCmd := tea.ExecProcess(cmd, func(err error) tea.Msg {
 		msg := buildSigningFinishedMsg(GitOperationOpsTypeForLogging, err, sanitizeGitSigningStderr(strings.TrimSpace(stderr.String())))
 		msg.GitOperations = gitOperations
 		return msg
 	})
+	return m, func() tea.Msg {
+		if routeGuard != nil {
+			if guardErr := routeGuard(); guardErr != nil {
+				m.GittiLogger.RegisterNewLog(GitOperationOpsTypeForLogging, "", logging.WARN,
+					fmt.Sprintf("[%s NOT STARTED]: %s", GitOperationOpsTypeForLogging, guardErr.Error()), true)
+				msg := buildSigningFinishedMsg(GitOperationOpsTypeForLogging, guardErr, "")
+				msg.GitOperations = gitOperations
+				return msg
+			}
+		}
+		return execCmd()
+	}
 }
 
 // ------------------------------------

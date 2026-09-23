@@ -14,7 +14,8 @@ const (
 	GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE = "GIT_REMOTE_SYNC_STATUS_AND_UPSTREAM_UPDATE"
 	GIT_EDIT_LINE_DETAILS_AND_FILES_UPDATE     = "GIT_EDIT_LINE_DETAILS_AND_FILES_UPDATE"
 	GIT_STATE_UPDATE                           = "GIT_STATE_UPDATE"
-	GIT_FETCH                                  = "GIT_FETCH" // user triggered, not from daemon
+	GIT_FETCH                                  = "GIT_FETCH"                      // user triggered, not from daemon
+	GIT_REMOTE_SYNC_STATUS_REQUEST             = "GIT_REMOTE_SYNC_STATUS_REQUEST" // user requested a fresh remote/upstream observation, not from daemon
 	GIT_TAG_UPDATE                             = "GIT_TAG_UPDATE"
 	GIT_TAG_PUSH_OUTPUT_UPDATE                 = "GIT_TAG_PUSH_OUTPUT_UPDATE"
 	GIT_TAG_FETCH_OUTPUT_UPDATE                = "GIT_TAG_FETCH_OUTPUT_UPDATE"

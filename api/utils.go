@@ -81,19 +81,25 @@ func PromptUserForGitInitConfirmation(repoPath string) {
 
 // ------------------------------------
 //
-//	Initialize all git operation handlers with the given path and shared dependencies
+//	Initialize all git operation handlers with the given path and shared dependencies.
+//	The worktree-bound routes (upstream observation, remote inventory, push,
+//	signing push) receive a generation-scoped command executor pinned to
+//	absoluteWorktreePath so a later worktree switch cannot re-target them.
 //
 // ------------------------------------
 func InitGitOperations(absoluteGitRepoPath string, absoluteWorktreePath string, updateChannel chan string, gittiLogging *logging.GittiLogging) *GitOperations {
 	gitProcessLock := git.InitGitProcessLock(gittiLogging)
+	cmdExecutor := executor.InitScopedCmdExecutor(absoluteWorktreePath)
 	return &GitOperations{
+		AbsoluteWorktreePath:   absoluteWorktreePath,
+		CmdExecutor:            cmdExecutor,
 		GitBranch:              git.InitGitBranch(gitProcessLock, settings.GITTICONFIGSETTINGS.FfMerge, gittiLogging),
-		GitCommit:              git.InitGitCommit(updateChannel, gitProcessLock, gittiLogging),
+		GitCommit:              git.InitGitCommit(updateChannel, gitProcessLock, cmdExecutor, gittiLogging),
 		GitFiles:               git.InitGitFile(updateChannel, gitProcessLock, gittiLogging),
 		GitPull:                git.InitGitPull(updateChannel, gitProcessLock, gittiLogging),
 		GitRebase:              git.InitGitRebase(updateChannel, gitProcessLock, gittiLogging),
 		GitStash:               git.InitGitStash(gitProcessLock, gittiLogging),
-		GitRemote:              git.InitGitRemote(updateChannel, gitProcessLock, gittiLogging),
+		GitRemote:              git.InitGitRemote(updateChannel, gitProcessLock, cmdExecutor, gittiLogging),
 		GitCommitLog:           git.InitGitCommitLog(updateChannel, gitProcessLock, settings.GITTICONFIGSETTINGS.MaxCommitLogCount, settings.GITTICONFIGSETTINGS.CommitLogShowAllBranches, gittiLogging),
 		GitRefLog:              git.InitGitRefLog(updateChannel, gitProcessLock, settings.GITTICONFIGSETTINGS.MaxRefLogCount, gittiLogging),
 		GitTag:                 git.InitGitTag(updateChannel, gitProcessLock, gittiLogging),

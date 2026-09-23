@@ -35,10 +35,10 @@ func handleNonTypingnKeyBindingInteraction(m *types.GittiModel) (*types.GittiMod
 				m.PopUpType = constant.AddRemotePromptPopUp
 				m.IsTyping.Store(true)
 				m.ShowPopUp.Store(true)
-				if m.GitOperations.GitRemote.CheckRemoteExist(false) {
-					remotePopUp.InitAddRemotePromptPopUpModel(m, false)
-				} else {
+				if m.GitOperations.GitRemote.CheckRemoteExist(false) == nil && len(m.GitOperations.GitRemote.Remote()) == 0 {
 					remotePopUp.InitAddRemotePromptPopUpModel(m, true)
+				} else {
+					remotePopUp.InitAddRemotePromptPopUpModel(m, false)
 				}
 			case constant.SHOW_WORKTREE:
 				m.PopUpType = constant.WorktreeAddNewWorktreePopUp

@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"github.com/gohyuhan/gitti/api"
 	"github.com/gohyuhan/gitti/api/git"
 	"github.com/gohyuhan/gitti/tui/constant"
 	"github.com/gohyuhan/gitti/tui/style"
@@ -116,4 +117,78 @@ type GitRemotePushPopUpModel struct {
 	// A result event carrying any other attempt id is rejected, so a late
 	// result from a cancelled attempt cannot overwrite a new push.
 	ActivePushAttemptID atomic.Int64
+}
+
+// ------------------------------------
+//
+//	GitPublishOptionDelegate renders the single publish row (name + command
+//	info) in the publish branch confirmation list.
+//	GitPublishOptionItem carries the display name and the command info string
+//	for the one valid publish choice.
+//
+// ------------------------------------
+type (
+	GitPublishOptionDelegate struct{}
+	GitPublishOptionItem     struct {
+		Name string
+		Info string
+	}
+)
+
+func (i GitPublishOptionItem) FilterValue() string {
+	return i.Name
+}
+
+func (d GitPublishOptionDelegate) Height() int                             { return 2 }
+func (d GitPublishOptionDelegate) Spacing() int                            { return 0 }
+func (d GitPublishOptionDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
+func (d GitPublishOptionDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
+	i, ok := listItem.(GitPublishOptionItem)
+	if !ok {
+		return
+	}
+
+	nameStr := fmt.Sprintf("   %s", i.Name)
+	infoStr := fmt.Sprintf("    %s", i.Info)
+
+	componentWidth := m.Width() - constant.ListItemOrTitleWidthPad - 2
+
+	nameStr = utils.TruncateString(nameStr, componentWidth)
+	infoStr = utils.TruncateString(infoStr, componentWidth)
+
+	nameRendered := style.ItemStyle.Render(nameStr)
+	infoRendered := style.ItemStyle.Faint(true).Render(infoStr)
+	fullStr := nameRendered + "\n" + "  " + infoRendered
+
+	var fn func(...string) string
+	if index == m.Index() {
+		fn = func(s ...string) string {
+			return style.SelectedItemStyle.Render("❯ " + strings.Join(s, " "))
+		}
+	} else {
+		fn = func(s ...string) string {
+			return style.ItemStyle.Render("  " + strings.Join(s, " "))
+		}
+	}
+
+	fmt.Fprint(w, fn(fullStr))
+}
+
+// ------------------------------------
+//
+//	PublishBranchConfirmationPopUpModel holds the single-option confirmation
+//	list and the target remote and branch the user is about to publish.
+//	Publishing is the first push of an unpublished branch, so exactly one
+//	choice is offered: push the branch and set it as the upstream.
+//
+// ------------------------------------
+type PublishBranchConfirmationPopUpModel struct {
+	PublishOptionList list.Model
+	RemoteName        string
+	Branch            string
+	// GitOperations is the captured Git-operations generation the publish
+	// confirmation belongs to; the confirmed route binds its execution guard
+	// to this generation rather than whatever worktree is active when the
+	// user confirms
+	GitOperations *api.GitOperations
 }

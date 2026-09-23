@@ -25,6 +25,31 @@ func InitCmdExecutor(repoPath string) {
 
 // ------------------------------------
 //
+//	Initialize a scoped command executor pinned to the given repo path,
+//	without replacing the shared global executor. A per-generation executor
+//	lets a Git-operations generation bind its worktree-bound routes (upstream
+//	observation, remote inventory, push, signing push) to the immutable
+//	worktree the generation was captured from, while the rest of the app keeps
+//	using the global executor.
+//
+// ------------------------------------
+func InitScopedCmdExecutor(repoPath string) *CmdExecutor {
+	return &CmdExecutor{
+		repoPath: repoPath,
+	}
+}
+
+// ------------------------------------
+//
+//	Return the directory this executor runs git commands in
+//
+// ------------------------------------
+func (c *CmdExecutor) RepoPath() string {
+	return c.repoPath
+}
+
+// ------------------------------------
+//
 //	Execute a git command with the given arguments
 //
 // ------------------------------------

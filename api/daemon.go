@@ -266,6 +266,12 @@ func (gd *GitDaemon) Start() {
 					// skipped, and the fetch's completion requests its own
 					// remote/upstream local state read
 					gd.requestFetch(true)
+				case git.GIT_REMOTE_SYNC_STATUS_REQUEST:
+					// the user asked for a fresh remote/upstream observation
+					// (for example a publish attempt whose confirmed branch no
+					// longer matches the latest observation); a coalesced
+					// request is never lost by the state domain's generation
+					gd.requestStatePass(&gd.remoteUpstreamStateDomain)
 				}
 			case <-gd.stopChannel:
 				gd.watcher.Close()
@@ -340,6 +346,8 @@ func (gd *GitDaemon) gitLatestInfoFetch(needFetch bool) {
 	go func() {
 		if gd.isGitRemotePassiveRunning.CompareAndSwap(false, true) {
 			defer gd.isGitRemotePassiveRunning.Store(false)
+			// a failed passive read returns an error and keeps the last good
+			// inventory untouched; the update re-renders the unchanged state
 			gd.gitOperations.Load().GitRemote.CheckRemoteExist(true)
 			gd.updateChannel <- git.GIT_REMOTE_UPDATE
 		}

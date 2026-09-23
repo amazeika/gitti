@@ -3,9 +3,11 @@ package git
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -173,20 +175,246 @@ func HasCommitBeforeHead() bool {
 
 // ------------------------------------
 //
-//	Related to Git check upstream existence
+//	resolveUpStream returns the upstream ref of the current head
+//	(e.g. "origin/main"), or an error when the head has no resolvable
+//	upstream.
 //
 // ------------------------------------
-func hasUpStream() (string, bool) {
+func resolveUpStream() (string, error) {
 	gitArgs := []string{"rev-parse", "--abbrev-ref", "@{u}"}
 
 	checkUpStreamCmdExecutor := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
 	checkUpStreamOutput, checkUpStreamErr := checkUpStreamCmdExecutor.Output()
 	if checkUpStreamErr != nil {
+		return "", checkUpStreamErr
+	}
+
+	return strings.TrimSpace(string(checkUpStreamOutput)), nil
+}
+
+func hasUpStream() (string, bool) {
+	upStream, err := resolveUpStream()
+	if err != nil {
 		return "", false
 	}
 
-	return strings.TrimSpace(string(checkUpStreamOutput)), true
+	return upStream, true
 }
+
+// ------------------------------------
+//
+//	UpstreamObservationState is the typed result of one upstream
+//	observation pass, replacing the old empty-string inference:
+//	pending before the first completed pass, tracked for an attached
+//	committed branch whose upstream resolves with valid counts,
+//	unpublished for an attached committed branch with no configured
+//	upstream, not-applicable for a detached or unborn head, and
+//	unavailable for an observation that could not be trusted.
+//
+// ------------------------------------
+type UpstreamObservationState string
+
+const (
+	UpstreamStatePending       UpstreamObservationState = "pending"
+	UpstreamStateTracked       UpstreamObservationState = "tracked"
+	UpstreamStateUnpublished   UpstreamObservationState = "unpublished"
+	UpstreamStateNotApplicable UpstreamObservationState = "not-applicable"
+	UpstreamStateUnavailable   UpstreamObservationState = "unavailable"
+)
+
+// ------------------------------------
+//
+//	UpstreamObservation is the result of one upstream observation pass.
+//	Branch is the observed head's symbolic branch name, UpStream the
+//	resolved upstream ref, UpStreamIcon the remote-kind glyph, and
+//	RemoteSync the validated ahead/behind counts. Only the tracked state
+//	carries UpStream and RemoteSync.
+//
+// ------------------------------------
+type UpstreamObservation struct {
+	State        UpstreamObservationState
+	Branch       string
+	UpStream     string
+	UpStreamIcon string
+	RemoteSync   RemoteSyncStatus
+}
+
+// ------------------------------------
+//
+//	resolveUpstreamObservation classifies the current head as tracked,
+//	unpublished, not-applicable, or unavailable. An attached committed
+//	branch whose upstream resolves with valid counts is tracked. A missing
+//	configured upstream is the only input that classifies as unpublished.
+//	Every command, start, or parse failure classifies as unavailable, so a
+//	caller never infers a first push from an inspection error. Each
+//	unavailable classification is logged, and the error is returned so the
+//	caller can report the failed read.
+//
+//	A named branch with no commit makes rev-parse fail to resolve HEAD.
+//	The unresolvable head is re-checked with symbolic-ref. A resolvable
+//	symbolic branch is the unborn-branch state (not-applicable), and a
+//	branch that cannot even be named is an unavailable read.
+//
+//	Every read after the branch is captured runs against that branch's
+//	refs, so a concurrent checkout cannot mix another branch's upstream or
+//	counts into the published observation.
+//
+//	Every command runs through the given command executor so the whole pass
+//	is pinned to one worktree generation's directory.
+//
+// ------------------------------------
+func resolveUpstreamObservation(cmdExecutor *executor.CmdExecutor, gittiLogger *logging.GittiLogging) (UpstreamObservation, error) {
+	checkoutBranchGitArgs := []string{"rev-parse", "--abbrev-ref", "HEAD"}
+	checkoutBranchOutput, checkoutBranchErr := cmdExecutor.RunGitCmd(checkoutBranchGitArgs, false).Output()
+	if checkoutBranchErr != nil {
+		symbolicRefGitArgs := []string{"symbolic-ref", "--quiet", "--short", "HEAD"}
+		symbolicRefOutput, symbolicRefErr := cmdExecutor.RunGitCmd(symbolicRefGitArgs, false).Output()
+		if symbolicRefErr != nil {
+			return unavailableUpstreamObservation(gittiLogger, checkoutBranchGitArgs, checkoutBranchErr)
+		}
+		branchName := strings.TrimSpace(string(symbolicRefOutput))
+		if branchName == "" {
+			return unavailableUpstreamObservation(gittiLogger, checkoutBranchGitArgs, checkoutBranchErr)
+		}
+		// Unborn branch: the symbolic branch exists but has no commit
+		return UpstreamObservation{State: UpstreamStateNotApplicable, Branch: branchName}, nil
+	}
+
+	branchName := strings.TrimSpace(string(checkoutBranchOutput))
+	if branchName == "HEAD" {
+		// Detached head: there is no publishable symbolic branch
+		return UpstreamObservation{State: UpstreamStateNotApplicable}, nil
+	}
+	if branchName == "" {
+		return unavailableUpstreamObservation(gittiLogger, checkoutBranchGitArgs, fmt.Errorf("rev-parse --abbrev-ref HEAD returned no branch"))
+	}
+
+	configured, configuredErr := branchHasConfiguredUpstream(cmdExecutor, branchName)
+	if configuredErr != nil {
+		return unavailableUpstreamObservation(gittiLogger, []string{"config", "--get", fmt.Sprintf("branch.%s.remote", branchName)}, configuredErr)
+	}
+	if !configured {
+		return UpstreamObservation{State: UpstreamStateUnpublished, Branch: branchName}, nil
+	}
+
+	upStream, upStreamErr := resolveUpStreamForBranch(cmdExecutor, branchName)
+	if upStreamErr != nil {
+		return unavailableUpstreamObservation(gittiLogger, []string{"rev-parse", "--abbrev-ref", branchName + "@{upstream}"}, upStreamErr)
+	}
+
+	local, remote, countsErr := remoteSyncCountsAgainstUpstream(cmdExecutor, branchName)
+	if countsErr != nil {
+		return unavailableUpstreamObservation(gittiLogger, []string{"rev-list", "--left-right", "--count", branchName + "..." + branchName + "@{upstream}"}, countsErr)
+	}
+
+	return UpstreamObservation{
+		State:        UpstreamStateTracked,
+		Branch:       branchName,
+		UpStream:     upStream,
+		UpStreamIcon: upstreamIconForUpStream(upStream),
+		RemoteSync:   RemoteSyncStatus{Local: local, Remote: remote},
+	}, nil
+}
+
+// ------------------------------------
+//
+//	resolveUpStreamForBranch returns the upstream ref of the named branch
+//	(e.g. "origin/main"), or an error when the branch has no resolvable
+//	upstream. Resolving against the captured branch name keeps an
+//	observation pinned to it when HEAD moves during the read.
+//
+// ------------------------------------
+func resolveUpStreamForBranch(cmdExecutor *executor.CmdExecutor, branchName string) (string, error) {
+	gitArgs := []string{"rev-parse", "--abbrev-ref", branchName + "@{upstream}"}
+
+	checkUpStreamCmdExecutor := cmdExecutor.RunGitCmd(gitArgs, false)
+	checkUpStreamOutput, checkUpStreamErr := checkUpStreamCmdExecutor.Output()
+	if checkUpStreamErr != nil {
+		return "", checkUpStreamErr
+	}
+
+	return strings.TrimSpace(string(checkUpStreamOutput)), nil
+}
+
+// ------------------------------------
+//
+//	unavailableUpstreamObservation logs the failed inspection command and
+//	builds the unavailable observation that introduces no new state.
+//
+// ------------------------------------
+func unavailableUpstreamObservation(gittiLogger *logging.GittiLogging, gitArgs []string, cause error) (UpstreamObservation, error) {
+	gittiLogger.RegisterNewLog(logging.CHECK_REMOTE_SYNC_STATUS_OPS, strings.Join(gitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.CHECK_REMOTE_SYNC_STATUS_OPS, cause.Error()), true)
+	return UpstreamObservation{State: UpstreamStateUnavailable}, cause
+}
+
+// ------------------------------------
+//
+//	branchHasConfiguredUpstream reports whether branch.<name>.remote is
+//	set. git exits 1 with no output and no stderr for an unset key, so
+//	only that exact case counts as "no upstream configured"; every other
+//	failure is a failed inspection and is returned as an error.
+//
+// ------------------------------------
+func branchHasConfiguredUpstream(cmdExecutor *executor.CmdExecutor, branchName string) (bool, error) {
+	gitArgs := []string{"config", "--get", fmt.Sprintf("branch.%s.remote", branchName)}
+	cmd := cmdExecutor.RunGitCmd(gitArgs, false)
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && len(exitErr.Stderr) == 0 {
+			return false, nil
+		}
+		return false, err
+	}
+	return strings.TrimSpace(string(output)) != "", nil
+}
+
+// ------------------------------------
+//
+//	remoteSyncCountsAgainstUpstream runs and validates the ahead/behind
+//	rev-list of the named branch against its own upstream. Counting the
+//	captured branch's refs rather than HEAD keeps the counts pinned to the
+//	observed branch when HEAD moves during the read. Any start or parse
+//	failure is an error rather than a cleared payload.
+//
+// ------------------------------------
+func remoteSyncCountsAgainstUpstream(cmdExecutor *executor.CmdExecutor, branchName string) (string, string, error) {
+	gitArgs := []string{"rev-list", "--left-right", "--count", branchName + "..." + branchName + "@{upstream}"}
+	output, err := cmdExecutor.RunGitCmd(gitArgs, false).Output()
+	if err != nil {
+		return "", "", err
+	}
+	return parseRemoteSyncCounts(output)
+}
+
+// ------------------------------------
+//
+//	parseRemoteSyncCounts validates that rev-list left-right count output
+//	is exactly two non-negative integers, so a malformed or empty result
+//	is an error instead of a cleared remote state.
+//
+// ------------------------------------
+func parseRemoteSyncCounts(raw []byte) (string, string, error) {
+	parts := strings.Fields(strings.TrimSpace(string(raw)))
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("remote sync status: invalid output format")
+	}
+	for _, part := range parts {
+		count, err := strconv.Atoi(part)
+		if err != nil || count < 0 {
+			return "", "", fmt.Errorf("remote sync status: invalid count %q", part)
+		}
+	}
+	return parts[0], parts[1], nil
+}
+
+// ------------------------------------
+//
+//	DefaultUpStreamRemoteIcon is the generic remote glyph used when the
+//	upstream identity cannot pick a remote-kind glyph.
+//
+// ------------------------------------
+const DefaultUpStreamRemoteIcon = "\ue702"
 
 // ------------------------------------
 //
@@ -194,18 +422,30 @@ func hasUpStream() (string, bool) {
 //
 // ------------------------------------
 func hasUpstreamWithIcon() (string, string, bool) {
-	remoteIcon := "\ue702"
 	upStream, upStreamExist := hasUpStream()
 	if !upStreamExist {
-		return remoteIcon, upStream, upStreamExist
+		return DefaultUpStreamRemoteIcon, upStream, upStreamExist
 	}
+
+	return upstreamIconForUpStream(upStream), upStream, upStreamExist
+}
+
+// ------------------------------------
+//
+//	upstreamIconForUpStream picks the remote-kind glyph for a resolved
+//	upstream ref (e.g. "origin/main"); a missing remote url falls back to
+//	the generic glyph.
+//
+// ------------------------------------
+func upstreamIconForUpStream(upStream string) string {
+	remoteIcon := DefaultUpStreamRemoteIcon
 
 	upStreamRemoteName := strings.Split(upStream, "/")[0]
 	gitArgs := []string{"remote", "get-url", upStreamRemoteName}
 	getUpStreamUrlCmdExecutor := executor.GittiCmdExecutor.RunGitCmd(gitArgs, false)
 	getUpStreamUrlOutput, getUpStreamUrlErr := getUpStreamUrlCmdExecutor.Output()
 	if getUpStreamUrlErr != nil {
-		return remoteIcon, upStream, upStreamExist
+		return remoteIcon
 	}
 
 	parsedUpstreamUrl := strings.TrimSpace(string(getUpStreamUrlOutput))
@@ -222,7 +462,7 @@ func hasUpstreamWithIcon() (string, string, bool) {
 	} else if strings.Contains(parsedUpstreamUrl, "dev.azure.com") {
 		remoteIcon = "\uebe8"
 	}
-	return remoteIcon, upStream, upStreamExist
+	return remoteIcon
 }
 
 // ------------------------------------

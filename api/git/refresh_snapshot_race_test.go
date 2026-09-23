@@ -64,8 +64,10 @@ func runSnapshotRaceExercise(t *testing.T, writer func(), reader func(), driver 
 //	the combined and individual remote/upstream getters while the refresh
 //	repeatedly publishes new generations, alternating the upstream between
 //	set and unset so the published state changes. Under -race it proves the
-//	snapshot publication and the readers are synchronized and never expose a
-//	mixed generation.
+//	snapshot publication and the readers are synchronized, and the
+//	consistency checks prove a reader never observes a mixed generation:
+//	tracked carries its upstream and valid counts, and every other state
+//	carries no upstream payload.
 //
 // ------------------------------------
 func TestRemoteSyncSnapshotReadersRaceWithRefresh(t *testing.T) {
@@ -84,7 +86,19 @@ func TestRemoteSyncSnapshotReadersRaceWithRefresh(t *testing.T) {
 			_ = gr.RemoteSyncStatus()
 			_ = gr.UpStreamRemoteIcon()
 			_ = gr.CurrentBranchUpStream()
-			_ = snapshot
+			switch snapshot.ObservationState {
+			case UpstreamStateTracked:
+				if snapshot.CurrentBranchUpStream == "" {
+					t.Error("a tracked generation published an empty upstream")
+				}
+				if snapshot.RemoteSyncStatus.Local == "" || snapshot.RemoteSyncStatus.Remote == "" {
+					t.Errorf("a tracked generation published incomplete counts: %v", snapshot.RemoteSyncStatus)
+				}
+			case UpstreamStateUnpublished, UpstreamStateNotApplicable, UpstreamStatePending:
+				if snapshot.CurrentBranchUpStream != "" {
+					t.Errorf("the %s generation published an upstream: %q", snapshot.ObservationState, snapshot.CurrentBranchUpStream)
+				}
+			}
 		},
 		func(iteration int) {
 			if iteration%2 == 0 {

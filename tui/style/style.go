@@ -58,6 +58,9 @@ var (
 	StashMessageStyle                              = NewStyle.Foreground(ColorYellowSoft)
 	StashFilePathStyle                             = NewStyle.Foreground(ColorCyanSoft)
 	ErrorStyle                                     = NewStyle.Foreground(ColorError)
+	LocalOnlyStatusStyle                           = NewStyle.Foreground(ColorBlueMuted)
+	NeutralStatusStyle                             = NewStyle.Foreground(ColorBlueGrayMuted).Faint(true)
+	UnavailableStatusStyle                         = NewStyle.Foreground(ColorYellowWarm)
 )
 
 var Palette = []color.Color{

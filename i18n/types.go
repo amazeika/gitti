@@ -81,6 +81,11 @@ type LanguageMapping struct {
 	GitInitRefuse                     string
 	GitInitPromptInvalidInput         string
 	GitCertainStateStillInProgress    string
+	GitStatusPanelLocalOnly           string
+	GitStatusPanelUpstreamUnavailable string
+	GitStatusPanelNotApplicable       string
+	GitStatusPanelPending             string
+	GitStatusPanelPublishBranchHint   string
 	MaxCommitLogCountSet              string
 	MaxCommitLogCountSetError         string
 	MaxRefLogCountSet                 string
@@ -313,6 +318,15 @@ type LanguageMapping struct {
 	NormalPush         string
 	ForcePushSafe      string
 	ForcePushDangerous string
+	// Publish branch (first push of an unpublished branch)
+	PublishBranchConfirmationTitle    string
+	PublishBranch                     string
+	PublishBlockedStatePending        string
+	PublishBlockedStateNotApplicable  string
+	PublishBlockedStateUnavailable    string
+	PublishBranchMismatchWarning      string
+	PushInventoryReadFailedWarning    string
+	PublishNoPushCapableRemoteWarning string
 	// Create New Branch
 	CreateNewBranchPrompt      string
 	EnterRemoteBranchPrompt    string
