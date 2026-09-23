@@ -4,6 +4,8 @@ Specifications for in-flight and shipped work.
 
 ## In progress
 
+- [Harden Push Cancellation and Partial Upstream State](13-harden-push-cancellation-and-partial-upstream-state.md) — issue [#13](https://github.com/amazeika/gitti/issues/13)
+
 ## Draft
 
 - [Compact Commit Log ref decorations](_draft-compact-commit-log-refs.md) — supersedes one
