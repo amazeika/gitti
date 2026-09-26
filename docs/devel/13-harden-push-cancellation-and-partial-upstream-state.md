@@ -3,7 +3,7 @@ status: in-progress
 issue: 13
 branch-kind: fix
 pr: 16
-completed: [1.3, 2, 3, 4]
+completed: [1.3, 2, 3, 4, 5]
 ---
 
 # Harden Push Cancellation and Partial Upstream State — Design Document
