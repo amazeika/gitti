@@ -3,7 +3,7 @@ status: in-progress
 issue: 13
 branch-kind: fix
 pr: 16
-completed: [1.3]
+completed: [1.3, 2]
 ---
 
 # Harden Push Cancellation and Partial Upstream State — Design Document
@@ -91,7 +91,7 @@ No on-disk migration. Existing Git configuration stays untouched, including part
 **Allowed scope:** `api/git/utils.go`, `api/git/remote.go`, `api/git/remote_test.go`, `api/git/commit_test.go`, `api/daemon_test.go`, and narrowly necessary test helpers
 **Exclusions:** fetch policy, push refspec selection, detached/unborn semantics and UI layout
 **Counterexamples:** remote-only, merge-only, failed config reads for either key, both keys set but upstream ref missing, and a post-push remote-domain failure
-**Tests:** pending
+**Tests:** `api/git/phase2_absent_upstream_test.go`, `api/phase2_postpush_refresh_test.go`
 
 **Acceptance criteria:**
 

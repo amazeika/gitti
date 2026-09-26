@@ -243,12 +243,14 @@ type UpstreamObservation struct {
 //
 //	resolveUpstreamObservation classifies the current head as tracked,
 //	unpublished, not-applicable, or unavailable. An attached committed
-//	branch whose upstream resolves with valid counts is tracked. A missing
-//	configured upstream is the only input that classifies as unpublished.
-//	Every command, start, or parse failure classifies as unavailable, so a
-//	caller never infers a first push from an inspection error. Each
-//	unavailable classification is logged, and the error is returned so the
-//	caller can report the failed read.
+//	branch whose upstream resolves with valid counts is tracked. A genuinely
+//	missing upstream configuration key is the only input that classifies as
+//	unpublished: both branch.<name>.remote and branch.<name>.merge are probed
+//	through the generation-bound executor, and either verified absence
+//	classifies as unpublished. Every command, start, or parse failure
+//	classifies as unavailable, so a caller never infers a first push from an
+//	inspection error. Each unavailable classification is logged, and the error
+//	is returned so the caller can report the failed read.
 //
 //	A named branch with no commit makes rev-parse fail to resolve HEAD.
 //	The unresolvable head is re-checked with symbolic-ref. A resolvable
@@ -289,12 +291,32 @@ func resolveUpstreamObservation(cmdExecutor *executor.CmdExecutor, gittiLogger *
 		return unavailableUpstreamObservation(gittiLogger, checkoutBranchGitArgs, fmt.Errorf("rev-parse --abbrev-ref HEAD returned no branch"))
 	}
 
-	configured, configuredErr := branchHasConfiguredUpstream(cmdExecutor, branchName)
-	if configuredErr != nil {
-		return unavailableUpstreamObservation(gittiLogger, []string{"config", "--get", fmt.Sprintf("branch.%s.remote", branchName)}, configuredErr)
+	remoteGitArgs := []string{"config", "--get", fmt.Sprintf("branch.%s.remote", branchName)}
+	mergeGitArgs := []string{"config", "--get", fmt.Sprintf("branch.%s.merge", branchName)}
+	remoteValue, remoteAbsent, remoteErr := readUpstreamConfigKey(cmdExecutor, branchName, "remote")
+	mergeValue, mergeAbsent, mergeErr := readUpstreamConfigKey(cmdExecutor, branchName, "merge")
+	if remoteErr != nil || mergeErr != nil {
+		// errors win over absence: both keys are always read, and each
+		// failing command is logged with its own identity while the
+		// joined error carries both identities for reconciliation summaries
+		joined := errors.Join(remoteErr, mergeErr)
+		if remoteErr != nil {
+			gittiLogger.RegisterNewLog(logging.CHECK_REMOTE_SYNC_STATUS_OPS, strings.Join(remoteGitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.CHECK_REMOTE_SYNC_STATUS_OPS, joined.Error()), true)
+		}
+		if mergeErr != nil {
+			gittiLogger.RegisterNewLog(logging.CHECK_REMOTE_SYNC_STATUS_OPS, strings.Join(mergeGitArgs, " "), logging.ERROR, fmt.Sprintf("[%s ERROR]: %s", logging.CHECK_REMOTE_SYNC_STATUS_OPS, joined.Error()), true)
+		}
+		return UpstreamObservation{State: UpstreamStateUnavailable}, joined
 	}
-	if !configured {
+	if remoteAbsent || mergeAbsent {
+		// either genuinely missing key is a valid absent state: neither
+		// the upstream-ref resolution nor the counts are needed
 		return UpstreamObservation{State: UpstreamStateUnpublished, Branch: branchName}, nil
+	}
+	// a local-dot remote tracks a ref in this same repository,
+	// resolved and counted directly from the merge value
+	if remoteValue == "." {
+		return resolveLocalDotObservation(cmdExecutor, gittiLogger, branchName, mergeValue)
 	}
 
 	upStream, upStreamErr := resolveUpStreamForBranch(cmdExecutor, branchName)
@@ -349,24 +371,45 @@ func unavailableUpstreamObservation(gittiLogger *logging.GittiLogging, gitArgs [
 
 // ------------------------------------
 //
-//	branchHasConfiguredUpstream reports whether branch.<name>.remote is
-//	set. git exits 1 with no output and no stderr for an unset key, so
-//	only that exact case counts as "no upstream configured"; every other
-//	failure is a failed inspection and is returned as an error.
+//	readUpstreamConfigKey reads one branch-scoped upstream configuration key
+//	(branch.<name>.remote or branch.<name>.merge) through the given command
+//	executor, capturing stdout and stderr separately. Only the verified
+//	missing-key result (exit 1 with empty stdout and empty stderr) reports
+//	absence. A start failure, any stderr, any other exit, or nonempty stdout
+//	on exit 1 is a read error. A successful value is usable when trimmed
+//	stdout is exactly one nonempty line (any single-line value, including
+//	".", is accepted without interpreting remote or merge-ref syntax);
+//	empty, whitespace-only, or multiline success is a read error, not absence.
+//	The returned error names the failing git config command so logs and
+//	reconciliation summaries identify which key failed.
 //
 // ------------------------------------
-func branchHasConfiguredUpstream(cmdExecutor *executor.CmdExecutor, branchName string) (bool, error) {
-	gitArgs := []string{"config", "--get", fmt.Sprintf("branch.%s.remote", branchName)}
+func readUpstreamConfigKey(cmdExecutor *executor.CmdExecutor, branchName string, key string) (string, bool, error) {
+	gitArgs := []string{"config", "--get", fmt.Sprintf("branch.%s.%s", branchName, key)}
 	cmd := cmdExecutor.RunGitCmd(gitArgs, false)
-	output, err := cmd.Output()
-	if err != nil {
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	out, errOut := stdout.Bytes(), stderr.Bytes()
+	if runErr != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && len(exitErr.Stderr) == 0 {
-			return false, nil
+		if errors.As(runErr, &exitErr) && exitErr.ExitCode() == 1 && len(out) == 0 && len(errOut) == 0 {
+			return "", true, nil
 		}
-		return false, err
+		return "", false, fmt.Errorf("reading git config %s: %w", strings.Join(gitArgs, " "), runErr)
 	}
-	return strings.TrimSpace(string(output)) != "", nil
+	if len(errOut) != 0 {
+		return "", false, fmt.Errorf("reading git config %s: unexpected stderr %q", strings.Join(gitArgs, " "), strings.TrimSpace(string(errOut)))
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return "", false, fmt.Errorf("reading git config %s: empty value", strings.Join(gitArgs, " "))
+	}
+	if strings.Contains(trimmed, "\n") {
+		return "", false, fmt.Errorf("reading git config %s: multiline value", strings.Join(gitArgs, " "))
+	}
+	return trimmed, false, nil
 }
 
 // ------------------------------------
@@ -385,6 +428,45 @@ func remoteSyncCountsAgainstUpstream(cmdExecutor *executor.CmdExecutor, branchNa
 		return "", "", err
 	}
 	return parseRemoteSyncCounts(output)
+}
+
+// ------------------------------------
+//
+//	resolveLocalDotObservation classifies a branch whose remote is the
+//	local-dot repository. With remote "." the merge value already names
+//	the tracked ref in this same repository, so that ref is resolved and
+//	counted directly: the abbreviated merge ref is the upstream identity
+//	(e.g. "master"), and the ahead/behind counts compare the branch
+//	against it. Any resolution or count failure classifies as unavailable
+//	with the failing command logged, exactly like the upstream probes.
+//
+// ------------------------------------
+func resolveLocalDotObservation(cmdExecutor *executor.CmdExecutor, gittiLogger *logging.GittiLogging, branchName string, mergeValue string) (UpstreamObservation, error) {
+	refGitArgs := []string{"rev-parse", "--abbrev-ref", mergeValue}
+	refOutput, refErr := cmdExecutor.RunGitCmd(refGitArgs, false).Output()
+	if refErr != nil {
+		return unavailableUpstreamObservation(gittiLogger, refGitArgs, refErr)
+	}
+	upStream := strings.TrimSpace(string(refOutput))
+	if upStream == "" {
+		return unavailableUpstreamObservation(gittiLogger, refGitArgs, fmt.Errorf("rev-parse --abbrev-ref %s returned no ref", mergeValue))
+	}
+	countsGitArgs := []string{"rev-list", "--left-right", "--count", branchName + "..." + mergeValue}
+	countsOutput, countsErr := cmdExecutor.RunGitCmd(countsGitArgs, false).Output()
+	if countsErr != nil {
+		return unavailableUpstreamObservation(gittiLogger, countsGitArgs, countsErr)
+	}
+	local, remote, parseErr := parseRemoteSyncCounts(countsOutput)
+	if parseErr != nil {
+		return unavailableUpstreamObservation(gittiLogger, countsGitArgs, parseErr)
+	}
+	return UpstreamObservation{
+		State:        UpstreamStateTracked,
+		Branch:       branchName,
+		UpStream:     upStream,
+		UpStreamIcon: upstreamIconForUpStream(upStream),
+		RemoteSync:   RemoteSyncStatus{Local: local, Remote: remote},
+	}, nil
 }
 
 // ------------------------------------
