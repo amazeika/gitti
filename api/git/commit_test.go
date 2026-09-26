@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -915,6 +916,178 @@ exit 0
 	}
 }
 
+func waitForTestFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.After(10 * time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline:
+			t.Fatalf("timed out waiting for synchronization file %q", path)
+		}
+	}
+}
+
+func TestGitPushIndependentSignalFailureSurvivesLateCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the signal-specific push fixture requires POSIX shell signals")
+	}
+	gitCommit, _, _, root, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*) echo "master"; exit 0 ;;
+  *"config --get"*) echo "origin"; exit 0 ;;
+esac
+for a in "$@"; do
+  case "$a" in
+    rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
+    push)
+      echo "signal-stdout"
+      echo "signal-stderr" >&2
+      parent=$$
+      ( while kill -0 "$parent" 2>/dev/null; do
+          state=$(ps -o stat= -p "$parent" 2>/dev/null)
+          case "$state" in Z*) break ;; esac
+        done
+        touch "$FAKE_GIT_PARENT_DEAD"
+        while [ ! -e "$FAKE_GIT_RELEASE_DESCENDANT" ]; do :; done
+        touch "$FAKE_GIT_DESCENDANT_DONE"
+      ) &
+      kill -TERM "$parent"
+      ;;
+  esac
+done
+exit 0
+`)
+	dead := filepath.Join(root, "parent-dead")
+	release := filepath.Join(root, "release-descendant")
+	descendantDone := filepath.Join(root, "descendant-done")
+	t.Setenv("FAKE_GIT_PARENT_DEAD", dead)
+	t.Setenv("FAKE_GIT_RELEASE_DESCENDANT", release)
+	t.Setenv("FAKE_GIT_DESCENDANT_DONE", descendantDone)
+	defer func() {
+		_ = os.WriteFile(release, []byte{}, 0o600)
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(descendantDone); err == nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan GitPushResult, 1)
+	go func() { done <- gitCommit.GitPush(ctx, pushRouteUnderTest("master")) }()
+	// The descendant observes the direct child's death independently, while
+	// keeping both inherited output descriptors open until the test releases it.
+	waitForTestFile(t, dead)
+	// Wait until both readers have provably consumed the pre-exit bytes (via
+	// the live progress buffers) before cancelling: cancel closes the read
+	// ends to bound the descendant-held drain, so cancelling before the reads
+	// would discard buffered bytes and make the retained-stream oracle racy.
+	// The descendant still holds the write ends, so the drain still cannot
+	// reach EOF before the cancellation.
+	outputDeadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(outputDeadline) {
+		stdoutLines, stderrLines := gitCommit.GitRemotePushOutput()
+		haveStdout, haveStderr := false, false
+		for _, line := range stdoutLines {
+			if strings.Contains(line, "signal-stdout") {
+				haveStdout = true
+				break
+			}
+		}
+		for _, line := range stderrLines {
+			if strings.Contains(line, "signal-stderr") {
+				haveStderr = true
+				break
+			}
+		}
+		if haveStdout && haveStderr {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+
+	select {
+	case result := <-done:
+		var exitErr *exec.ExitError
+		if result.Cancelled() {
+			t.Error("late context cancellation relabelled the independently signalled process")
+		}
+		if !errors.As(result.Err(), &exitErr) {
+			t.Errorf("Err() = %v, want the direct process *exec.ExitError", result.Err())
+		}
+		if exitErr != nil && result.ExitCode() != exitErr.ExitCode() {
+			t.Errorf("ExitCode() = %d, want the direct Wait status %d", result.ExitCode(), exitErr.ExitCode())
+		}
+		if errors.Is(result.Err(), context.Canceled) {
+			t.Errorf("Err() = %v, must not contain the late context cancellation", result.Err())
+		}
+		if !strings.Contains(string(result.Stdout()), "signal-stdout") || !strings.Contains(string(result.Stderr()), "signal-stderr") {
+			t.Errorf("signal failure lost captured streams: stdout %q, stderr %q", result.Stdout(), result.Stderr())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("GitPush did not return after late cancellation")
+	}
+}
+
+func TestGitPushCancellationRetainsReapedProcessError(t *testing.T) {
+	gitCommit, _, _, root, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*) echo "master"; exit 0 ;;
+  *"config --get"*) echo "origin"; exit 0 ;;
+esac
+for a in "$@"; do
+  case "$a" in
+    rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
+    push)
+      echo "cancel-stdout"
+      echo "cancel-stderr" >&2
+      touch "$FAKE_GIT_READY"
+      exec sleep 30
+      ;;
+  esac
+done
+exit 0
+`)
+	ready := filepath.Join(root, "push-ready")
+	t.Setenv("FAKE_GIT_READY", ready)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan GitPushResult, 1)
+	go func() { done <- gitCommit.GitPush(ctx, pushRouteUnderTest("master")) }()
+	waitForTestFile(t, ready)
+	cancel()
+	select {
+	case result := <-done:
+		var exitErr *exec.ExitError
+		if !result.Cancelled() || !errors.Is(result.Err(), context.Canceled) {
+			t.Errorf("cancelled process outcome = cancelled %v, err %v; want cancellation cause", result.Cancelled(), result.Err())
+		}
+		if !errors.As(result.Err(), &exitErr) {
+			t.Errorf("Err() = %v, want the reaped process *exec.ExitError alongside the context cause", result.Err())
+		}
+		if exitErr != nil && result.ExitCode() != exitErr.ExitCode() {
+			t.Errorf("ExitCode() = %d, want the reaped process status %d", result.ExitCode(), exitErr.ExitCode())
+		}
+		if !strings.Contains(string(result.Stdout()), "cancel-stdout") || !strings.Contains(string(result.Stderr()), "cancel-stderr") {
+			t.Errorf("cancelled process lost captured streams: stdout %q, stderr %q", result.Stdout(), result.Stderr())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("GitPush did not return after terminating the live process")
+	}
+}
+
 func TestGitPushRouteGuardRefusalIsReportedBeforeStarting(t *testing.T) {
 	// The generation guard is the last pre-start check: when it reports a
 	// stale generation, the prepared arguments are discarded and no process
@@ -978,5 +1151,339 @@ exit 0
 	}
 	if startErrorLogged {
 		t.Error("a guard refusal was misreported as a START ERROR")
+	}
+}
+
+func TestGitPushZeroExitBeforeLateCancellationRetainsSuccess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the inherited-descriptor push fixture requires POSIX shell signals")
+	}
+	gitCommit, _, _, root, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*) echo "master"; exit 0 ;;
+  *"config --get"*) echo "origin"; exit 0 ;;
+esac
+for a in "$@"; do
+  case "$a" in
+    rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
+    push)
+      echo "zero-stdout"
+      echo "zero-stderr" >&2
+      parent=$$
+      ( while kill -0 "$parent" 2>/dev/null; do
+          state=$(ps -o stat= -p "$parent" 2>/dev/null)
+          case "$state" in Z*) break ;; esac
+        done
+        touch "$FAKE_GIT_PARENT_DEAD"
+        while [ ! -e "$FAKE_GIT_RELEASE_DESCENDANT" ]; do :; done
+        touch "$FAKE_GIT_DESCENDANT_DONE"
+      ) &
+      exit 0
+      ;;
+  esac
+done
+exit 0
+`)
+	parentDead := filepath.Join(root, "zero-parent-dead")
+	releaseDescendant := filepath.Join(root, "zero-release-descendant")
+	descendantDone := filepath.Join(root, "zero-descendant-done")
+	t.Setenv("FAKE_GIT_PARENT_DEAD", parentDead)
+	t.Setenv("FAKE_GIT_RELEASE_DESCENDANT", releaseDescendant)
+	t.Setenv("FAKE_GIT_DESCENDANT_DONE", descendantDone)
+	// Best-effort descendant release: runs even when the test times out or
+	// fails, without a Fatal that could mask the original failure.
+	defer func() {
+		_ = os.WriteFile(releaseDescendant, []byte{}, 0o600)
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(descendantDone); err == nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan GitPushResult, 1)
+	go func() { done <- gitCommit.GitPush(ctx, pushRouteUnderTest("master")) }()
+	// The descendant observes the direct child's death independently while
+	// keeping both inherited output descriptors open, so the late drain
+	// cannot finish on its own. Wait until both readers have consumed the
+	// pre-exit bytes before cancelling so the retained-stream oracle is not
+	// raced by the cancel-time pipe close that bounds the drain.
+	waitForTestFile(t, parentDead)
+	zeroDeadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(zeroDeadline) {
+		stdoutLines, stderrLines := gitCommit.GitRemotePushOutput()
+		haveStdout, haveStderr := false, false
+		for _, line := range stdoutLines {
+			if strings.Contains(line, "zero-stdout") {
+				haveStdout = true
+				break
+			}
+		}
+		for _, line := range stderrLines {
+			if strings.Contains(line, "zero-stderr") {
+				haveStderr = true
+				break
+			}
+		}
+		if haveStdout && haveStderr {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+
+	select {
+	case result := <-done:
+		if !result.Started() {
+			t.Error("the zero-exit process started, so Started() must be true")
+		}
+		if result.Cancelled() {
+			t.Error("late context cancellation relabelled the zero-exit direct process")
+		}
+		if result.ExitCode() != 0 {
+			t.Errorf("ExitCode() = %d, want the direct Wait status 0", result.ExitCode())
+		}
+		if !result.Success() {
+			t.Error("a zero exit before late cancellation must retain Success() == true for success-only reconciliation")
+		}
+		if errors.Is(result.Err(), context.Canceled) {
+			t.Errorf("Err() = %v, must not contain the late context cancellation", result.Err())
+		}
+		if !strings.Contains(string(result.Stdout()), "zero-stdout") || !strings.Contains(string(result.Stderr()), "zero-stderr") {
+			t.Errorf("zero-exit push lost captured streams: stdout %q, stderr %q", result.Stdout(), result.Stderr())
+		}
+		// A late pipe-close capture failure is recorded separately and
+		// must not change the success contract that gates reconciliation.
+		if result.Err() != nil && (!result.Success() || errors.Is(result.Err(), context.Canceled)) {
+			t.Errorf("capture failure Err() = %v must keep Success() == true without a context cause", result.Err())
+		}
+		if !argvCarriesOperationArgs(result.Argv(), []string{"push", "--progress", "origin"}) {
+			t.Errorf("zero-exit push argv = %v, want the tracked-branch operation arguments", result.Argv())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("GitPush did not return after late cancellation of the zero-exit drain")
+	}
+}
+
+func TestGitPushNonZeroExitBeforeLateCancellationIsNotRelabelled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the inherited-descriptor push fixture requires POSIX shell signals")
+	}
+	gitCommit, _, _, root, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*) echo "master"; exit 0 ;;
+  *"config --get"*) echo "origin"; exit 0 ;;
+esac
+for a in "$@"; do
+  case "$a" in
+    rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
+    push)
+      echo "nonzero-stdout"
+      echo "nonzero-stderr" >&2
+      parent=$$
+      ( while kill -0 "$parent" 2>/dev/null; do
+          state=$(ps -o stat= -p "$parent" 2>/dev/null)
+          case "$state" in Z*) break ;; esac
+        done
+        touch "$FAKE_GIT_PARENT_DEAD"
+        while [ ! -e "$FAKE_GIT_RELEASE_DESCENDANT" ]; do :; done
+        touch "$FAKE_GIT_DESCENDANT_DONE"
+      ) &
+      exit 3
+      ;;
+  esac
+done
+exit 0
+`)
+	parentDead := filepath.Join(root, "nonzero-parent-dead")
+	releaseDescendant := filepath.Join(root, "nonzero-release-descendant")
+	descendantDone := filepath.Join(root, "nonzero-descendant-done")
+	t.Setenv("FAKE_GIT_PARENT_DEAD", parentDead)
+	t.Setenv("FAKE_GIT_RELEASE_DESCENDANT", releaseDescendant)
+	t.Setenv("FAKE_GIT_DESCENDANT_DONE", descendantDone)
+	defer func() {
+		_ = os.WriteFile(releaseDescendant, []byte{}, 0o600)
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(descendantDone); err == nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan GitPushResult, 1)
+	go func() { done <- gitCommit.GitPush(ctx, pushRouteUnderTest("master")) }()
+	// Same ordering as the zero-exit case: the direct child is dead and both
+	// readers have consumed the pre-exit bytes before the late cancellation
+	// bounds the descendant-held drain.
+	waitForTestFile(t, parentDead)
+	nonzeroDeadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(nonzeroDeadline) {
+		stdoutLines, stderrLines := gitCommit.GitRemotePushOutput()
+		haveStdout, haveStderr := false, false
+		for _, line := range stdoutLines {
+			if strings.Contains(line, "nonzero-stdout") {
+				haveStdout = true
+				break
+			}
+		}
+		for _, line := range stderrLines {
+			if strings.Contains(line, "nonzero-stderr") {
+				haveStderr = true
+				break
+			}
+		}
+		if haveStdout && haveStderr {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+
+	select {
+	case result := <-done:
+		var exitErr *exec.ExitError
+		if result.Cancelled() {
+			t.Error("late context cancellation relabelled the independently failed nonzero process")
+		}
+		if result.ExitCode() != 3 {
+			t.Errorf("ExitCode() = %d, want the direct Wait status 3", result.ExitCode())
+		}
+		if !errors.As(result.Err(), &exitErr) {
+			t.Errorf("Err() = %v, want the direct process *exec.ExitError", result.Err())
+		}
+		if exitErr != nil && result.ExitCode() != exitErr.ExitCode() {
+			t.Errorf("ExitCode() = %d, want the direct Wait status %d", result.ExitCode(), exitErr.ExitCode())
+		}
+		if errors.Is(result.Err(), context.Canceled) {
+			t.Errorf("Err() = %v, must not contain the late context cancellation", result.Err())
+		}
+		if result.Success() {
+			t.Error("a nonzero exit must not be reported as a success")
+		}
+		if !strings.Contains(string(result.Stdout()), "nonzero-stdout") || !strings.Contains(string(result.Stderr()), "nonzero-stderr") {
+			t.Errorf("nonzero push lost captured streams: stdout %q, stderr %q", result.Stdout(), result.Stderr())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("GitPush did not return after late cancellation of the nonzero drain")
+	}
+}
+
+func TestGitPushSignalExitBeforeCompletionNotificationSurvivesLateCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the signal-specific push fixture requires POSIX shell signals")
+	}
+	gitCommit, _, _, root, _ := gitCommitUnderTestWithFakeGit(t, `#!/bin/sh
+case "$*" in
+  *"--abbrev-ref HEAD"*) echo "master"; exit 0 ;;
+  *"config --get"*) echo "origin"; exit 0 ;;
+esac
+for a in "$@"; do
+  case "$a" in
+    rev-parse) echo "origin/master"; exit 0 ;;
+    rev-list) echo "0 0"; exit 0 ;;
+    push)
+      echo "signal-stdout"
+      echo "signal-stderr" >&2
+      parent=$$
+      ( while kill -0 "$parent" 2>/dev/null; do
+          state=$(ps -o stat= -p "$parent" 2>/dev/null)
+          case "$state" in Z*) break ;; esac
+        done
+        touch "$FAKE_GIT_PARENT_DEAD"
+        while [ ! -e "$FAKE_GIT_RELEASE_DESCENDANT" ]; do :; done
+        touch "$FAKE_GIT_DESCENDANT_DONE"
+      ) &
+      kill -TERM "$parent"
+      ;;
+  esac
+done
+exit 0
+`)
+	parentDead := filepath.Join(root, "notify-parent-dead")
+	releaseDescendant := filepath.Join(root, "notify-release-descendant")
+	descendantDone := filepath.Join(root, "notify-descendant-done")
+	t.Setenv("FAKE_GIT_PARENT_DEAD", parentDead)
+	t.Setenv("FAKE_GIT_RELEASE_DESCENDANT", releaseDescendant)
+	t.Setenv("FAKE_GIT_DESCENDANT_DONE", descendantDone)
+	// No reader gate: both readers drain live from the start. The descendant
+	// inherits the pipe write ends and holds them open, so the drain cannot
+	// reach EOF (completion notification) before the test cancels; closing
+	// the read ends on cancellation bounds that drain. The test orders
+	// direct exit -> consumed pre-exit bytes -> cancellation -> completion
+	// without ever blocking asserted bytes behind the cancellation.
+	defer func() {
+		_ = os.WriteFile(releaseDescendant, []byte{}, 0o600)
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(descendantDone); err == nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan GitPushResult, 1)
+	go func() { done <- gitCommit.GitPush(ctx, pushRouteUnderTest("master")) }()
+	// The direct child died while the descendant still holds the write ends,
+	// so its exit precedes the cancellation and the drain cannot complete
+	// (no EOF) before the cancellation bounds it. Both readers consume the
+	// pre-exit bytes first, so the retained-stream oracle is not raced by
+	// the cancel-time pipe close.
+	waitForTestFile(t, parentDead)
+	notifyDeadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(notifyDeadline) {
+		stdoutLines, stderrLines := gitCommit.GitRemotePushOutput()
+		haveStdout, haveStderr := false, false
+		for _, line := range stdoutLines {
+			if strings.Contains(line, "signal-stdout") {
+				haveStdout = true
+				break
+			}
+		}
+		for _, line := range stderrLines {
+			if strings.Contains(line, "signal-stderr") {
+				haveStderr = true
+				break
+			}
+		}
+		if haveStdout && haveStderr {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+
+	select {
+	case result := <-done:
+		var exitErr *exec.ExitError
+		if result.Cancelled() {
+			t.Error("cancellation before completion notification relabelled the independently signalled process")
+		}
+		if !errors.As(result.Err(), &exitErr) {
+			t.Errorf("Err() = %v, want the direct process *exec.ExitError", result.Err())
+		}
+		if exitErr != nil && result.ExitCode() != exitErr.ExitCode() {
+			t.Errorf("ExitCode() = %d, want the direct Wait status %d", result.ExitCode(), exitErr.ExitCode())
+		}
+		if errors.Is(result.Err(), context.Canceled) {
+			t.Errorf("Err() = %v, must not contain the late context cancellation", result.Err())
+		}
+		if !strings.Contains(string(result.Stdout()), "signal-stdout") || !strings.Contains(string(result.Stderr()), "signal-stderr") {
+			t.Errorf("signal failure lost captured streams: stdout %q, stderr %q", result.Stdout(), result.Stderr())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("GitPush did not return after cancellation before completion notification")
 	}
 }

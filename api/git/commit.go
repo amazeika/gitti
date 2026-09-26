@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -20,6 +21,25 @@ import (
 const (
 	gitPushStdoutStream = "stdout"
 	gitPushStderrStream = "stderr"
+
+	// pushQueuedDrainGracePeriod bounds the final drain after context
+	// cancellation. It retains only bytes already read before the timed
+	// read-end closure. Closing the owned read ends immediately would race
+	// with concurrent readers that have not yet consumed pipe-buffered
+	// output. The grace window gives those readers a bounded opportunity
+	// to retain pre-close bytes. Its expiry closes the read ends to unblock
+	// a drain held open by an inherited writer. Bytes still unread when a
+	// reader stays blocked past the cutoff may be lost: only bytes copied
+	// before closure survive.
+	pushQueuedDrainGracePeriod = 500 * time.Millisecond
+
+	// pushCancelEscalationPeriod bounds the wait for the direct child to
+	// terminate after the distinguishable cancellation signal before the
+	// handshake escalates to SIGKILL. Escalation only keeps the handshake
+	// bounded for a signal-resistant child; its SIGKILL status is never
+	// cancellation evidence, so an escalated kill stays an observed
+	// process outcome.
+	pushCancelEscalationPeriod = 500 * time.Millisecond
 )
 
 type GitCommit struct {
@@ -589,6 +609,12 @@ func (gc *GitCommit) drainGitPushStream(ctx context.Context, stream string, pipe
 	return nil
 }
 
+// Direct-process liveness, the distinguishable cancellation signal and the
+// SIGTERM reaped-status filter live in the build-tagged push_liveness_*
+// files so non-Unix targets keep compiling. The older SIGKILL status helper
+// is retained for its frozen unit contract; the handshake below no longer
+// uses a SIGKILL claim.
+
 // ------------------------------------
 //
 //	Build a push result with no process status recorded yet; the -1 exit code
@@ -682,7 +708,7 @@ func (gc *GitCommit) GitPush(ctx context.Context, route GitPushRoute) GitPushRes
 		return gc.publishGitPushResult(result)
 	}
 
-	cmd := gc.cmdExecutor.RunGitCmdWithContext(ctx, pushGitArgs, true)
+	cmd := gc.cmdExecutor.RunGitCmd(pushGitArgs, true)
 
 	// The result owns defensive copies of the process identity before anything
 	// can mutate the command.
@@ -690,38 +716,86 @@ func (gc *GitCommit) GitPush(ctx context.Context, route GitPushRoute) GitPushRes
 	result.argv = append([]string(nil), cmd.Args...)
 	result.workingDirectory = cmd.Dir
 
-	// Separate stdout and stderr so the two streams are retained and drained
-	// concurrently without either pipe filling and blocking the child.
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, "", logging.ERROR, fmt.Sprintf("[PIPE ERROR]: %s", err.Error()), false)
-		result.err = err
-		return gc.publishGitPushResult(result)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, "", logging.ERROR, fmt.Sprintf("[PIPE ERROR]: %s", err.Error()), false)
-		result.err = err
+	// A cancellation observed before launch never starts a process: it is
+	// reported as cancelled with no exit status rather than a setup failure.
+	if ctx.Err() != nil {
+		result.cancelled = true
+		result.err = ctx.Err()
+		gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, strings.Join(pushGitArgs, " "), logging.WARN, fmt.Sprintf("[%s CANCELLED]", logging.GIT_PUSH_OPS), true)
 		return gc.publishGitPushResult(result)
 	}
 
+	// The push owns both pipe ends explicitly instead of sharing StdoutPipe
+	// readers with Wait.
+	// The parent closes its write ends after Start.
+	// The single reaper below then observes the direct child independently of
+	// descendants that inherit the write ends.
+	stdoutR, stdoutW, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, "", logging.ERROR, fmt.Sprintf("[PIPE ERROR]: %s", pipeErr.Error()), false)
+		result.err = pipeErr
+		return gc.publishGitPushResult(result)
+	}
+	stderrR, stderrW, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, "", logging.ERROR, fmt.Sprintf("[PIPE ERROR]: %s", pipeErr.Error()), false)
+		result.err = pipeErr
+		return gc.publishGitPushResult(result)
+	}
+	cmd.Stdout = stdoutW
+	cmd.Stderr = stderrW
+
 	// The route's execution guard rejects the attempt when the Git-
 	// operations generation changed after the route was confirmed and
-	// before the process started; no process may be launched from a stale
-	// generation, and the result keeps the not-started shape of a prepare
-	// refusal rather than a command that never ran.
+	// before the process started. No process is launched from a stale
+	// generation.
+	// The result keeps the not-started shape of a prepare refusal.
 	if route.ActiveGuard != nil {
 		if guardErr := route.ActiveGuard(); guardErr != nil {
-			gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, "", logging.WARN, fmt.Sprintf("[%s NOT STARTED]: %s", logging.GIT_PUSH_OPS, guardErr.Error()), true)
+			_ = stdoutR.Close()
+			_ = stdoutW.Close()
+			_ = stderrR.Close()
+			_ = stderrW.Close()
 			result.argv = nil
 			result.workingDirectory = gc.pushWorkingDirectory()
-			result.err = guardErr
+			if ctx.Err() != nil {
+				// The context was cancelled while the guard held the
+				// pre-Start gate: the attempt stays unstarted and is
+				// reported as cancelled with no exit status rather
+				// than a setup failure.
+				result.cancelled = true
+				result.err = errors.Join(guardErr, ctx.Err())
+				gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, strings.Join(pushGitArgs, " "), logging.WARN, fmt.Sprintf("[%s CANCELLED]", logging.GIT_PUSH_OPS), true)
+			} else {
+				result.err = guardErr
+				gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, "", logging.WARN, fmt.Sprintf("[%s NOT STARTED]: %s", logging.GIT_PUSH_OPS, guardErr.Error()), true)
+			}
 			return gc.publishGitPushResult(result)
 		}
 	}
 
+	// A context cancelled during the guard or setup (after the pre-launch
+	// check above) still starts nothing: all setup pipe ends close and the
+	// attempt is reported as an unstarted cancellation with no exit status.
+	if ctx.Err() != nil {
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		_ = stderrR.Close()
+		_ = stderrW.Close()
+		result.cancelled = true
+		result.err = ctx.Err()
+		gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, strings.Join(pushGitArgs, " "), logging.WARN, fmt.Sprintf("[%s CANCELLED]", logging.GIT_PUSH_OPS), true)
+		return gc.publishGitPushResult(result)
+	}
+
 	// Start the process
 	if err := cmd.Start(); err != nil {
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		_ = stderrR.Close()
+		_ = stderrW.Close()
 		if ctx.Err() != nil {
 			// Cancellation before Start is a cancellation, not a setup
 			// failure: no process exists to carry an exit status.
@@ -734,6 +808,10 @@ func (gc *GitCommit) GitPush(ctx context.Context, route GitPushRoute) GitPushRes
 		result.err = err
 		return gc.publishGitPushResult(result)
 	}
+	// The child (and any descendants) hold their own duplicates of the write
+	// ends; the parent closes its copies so EOF tracks the last live writer.
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
 	result.started = true
 	gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, strings.Join(pushGitArgs, " "), logging.INFO, "", true)
 
@@ -745,41 +823,175 @@ func (gc *GitCommit) GitPush(ctx context.Context, route GitPushRoute) GitPushRes
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		stdoutReadErr = gc.drainGitPushStream(ctx, gitPushStdoutStream, stdout, &stdoutBuffer)
+		stdoutReadErr = gc.drainGitPushStream(ctx, gitPushStdoutStream, stdoutR, &stdoutBuffer)
 	}()
 	go func() {
 		defer wg.Done()
-		stderrReadErr = gc.drainGitPushStream(ctx, gitPushStderrStream, stderr, &stderrBuffer)
+		stderrReadErr = gc.drainGitPushStream(ctx, gitPushStderrStream, stderrR, &stderrBuffer)
 	}()
 
-	// The readers must reach EOF before Wait: Wait closes the pipe read
-	// ends when it returns, so bytes a reader had not yet consumed would be
-	// lost from the retained output.
+	// Exactly one reaper observes the direct child independently of output
+	// EOF. The buffered channel records completion synchronously at Wait
+	// return.
+	// A later cancellation check then sees a completed process even when the
+	// completion notification has not been consumed yet.
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	// Ordinary completion retains every byte by draining both readers to
+	// EOF; with owned pipes Wait no longer closes the read ends, so an
+	// uninterrupted drain loses nothing already available. Cancellation
+	// instead applies the timed read-end closure below: only bytes copied
+	// before that closure survive, and bytes still unread when a reader
+	// stays blocked past the cutoff may be lost.
 	drained := make(chan struct{})
 	go func() {
 		wg.Wait()
 		close(drained)
 	}()
 
-	select {
-	case <-drained:
-		// Both streams drained to EOF; Wait now only reaps the process.
-	case <-ctx.Done():
-		// A killed child's descendants can retain the pipe write ends, so
-		// EOF may never arrive on its own; close the read ends to unblock
-		// the readers deterministically.
-		_ = stdout.Close()
-		_ = stderr.Close()
-		<-drained
+	// Coordinate direct-process completion, context cancellation and the
+	// kill in one handshake. Cancellation is claimed only when the direct
+	// process had not already completed.
+	// A completed Wait observed in the buffered channel wins over a later cancellation.
+	// When Wait completion and the context notification are simultaneously ready, the handshake observes the process outcome without claiming cancellation.
+	// That simultaneous rule does not cover the same-signal overlap below: an independent SIGTERM racing our own SIGTERM stays indistinguishable and keeps the cancellation claim.
+	// A Kill call alone is never treated as proof of causation.
+	var waitErr error
+	waitSel := waitCh
+	drainSel := drained
+	ctxSel := ctx.Done()
+	waitDone := false
+	drainDone := false
+	cancelSignalled := false
+	for waitSel != nil || drainSel != nil {
+		select {
+		case err := <-waitSel:
+			waitErr = err
+			waitDone = true
+			waitSel = nil
+		case <-drainSel:
+			drainDone = true
+			drainSel = nil
+		case <-ctxSel:
+			select {
+			case err := <-waitSel:
+				waitErr = err
+				waitDone = true
+				waitSel = nil
+			default:
+				if !waitDone && cmd.Process != nil {
+					// Only a successfully signalled, positively live target
+					// keeps a cancellation claim, and only when the reaped
+					// status below agrees with our distinguishable signal.
+					// A failed signal never establishes that cancellation
+					// terminated the direct process.
+					// A successful signal against an already dead, unreaped
+					// zombie proves nothing by itself (signals succeed on
+					// zombies).
+					// The pre-signal probes supply the first liveness
+					// evidence. The reaped status check below must still
+					// agree with our SIGTERM.
+					// An independent SIGKILL (or any numeric/other-signal exit)
+					// that lands in the final observation-to-signal window reaps
+					// a status our signal could not have produced, so it stays
+					// an observed process failure even though cancellation was requested.
+					//
+					// The ps fallback inside that probe can itself span an
+					// independent death. Its window is milliseconds wide.
+					// A SIGKILL delivered inside it leaves a zombie that is
+					// still materializing when a single immediate recheck runs.
+					// Settle-poll the fast kernel-state checks before
+					// signalling. Such a death then becomes visible instead
+					// of racing the cancellation signal.
+					// A still-live child exhausts the bounded poll and is
+					// still signalled, so genuine cancellation is never
+					// suppressed by undeterminable state.
+					//
+					// Residual ambiguity, stated explicitly: an independent
+					// SIGTERM racing our own SIGTERM reaps the same status
+					// our signal produces, so that one overlap is
+					// observationally indistinguishable and keeps the
+					// cancellation claim. The amended phase-1.3 policy accepts
+					// this overlap as a cancellation outcome without asserting
+					// which signal caused death: matching status is not causal proof.
+					// No independent SIGKILL, numeric exit or other signal
+					// can be relabelled that way.
+					if !pushDirectProcessAlreadyExited(cmd.Process.Pid) && !pushDirectProcessSettledDead(cmd.Process.Pid) {
+						if pushCancelSignalDirectProcess(cmd.Process) {
+							cancelSignalled = true
+							// Bounded escalation for a child resisting the
+							// first signal: SIGTERM normally reaps promptly,
+							// so a short wait still reports genuine live
+							// kills without delay. When the child resists,
+							// SIGKILL keeps the handshake bounded instead of
+							// hanging, but that escalation SIGKILL is never
+							// attribution evidence: its status disagrees with
+							// our signal, so the outcome below stays observed.
+							select {
+							case err := <-waitSel:
+								waitErr = err
+								waitDone = true
+								waitSel = nil
+							case <-time.After(pushCancelEscalationPeriod):
+								_ = cmd.Process.Kill()
+							}
+						}
+					}
+				}
+			}
+			// After direct exit, inherited descriptors may remain open.
+			// Bound that drain while retaining only bytes already read before
+			// the timed closure. Closing the read ends immediately would
+			// race with readers that have not yet consumed pipe-buffered
+			// output. Give those readers a bounded window to retain pre-close
+			// bytes. The timer still closes to unblock a drain held open
+			// by an inherited writer. Bytes still unread when a reader
+			// stays blocked past that cutoff may be lost. A context that
+			// never cancels imposes no post-exit timeout.
+			go func() {
+				select {
+				case <-drained:
+				case <-time.After(pushQueuedDrainGracePeriod):
+				}
+				_ = stdoutR.Close()
+				_ = stderrR.Close()
+			}()
+			ctxSel = nil
+		}
 	}
-
-	waitErr := cmd.Wait()
+	// Owned read ends close on every return: the cancellation branch above
+	// bounds the inherited-descriptor drain with a timed close, and closing
+	// them again after an ordinary EOF drain is harmless. Both drains
+	// already finished (the readers returned before `drained` closed), so no
+	// byte already copied before closure is lost.
+	_ = stdoutR.Close()
+	_ = stderrR.Close()
+	_ = drainDone
+	// A zero-exit Wait can only arrive from an independently completed
+	// child; it is never retroactively attributed to a concurrent
+	// cancellation. A signal success alone is not proof of causation either.
+	// Only a SIGTERM reaped status agrees with our distinguishable
+	// cancellation signal. E.g. independent SIGKILL, any other signal or
+	// any numeric exit wins conservatively as the observed process outcome.
+	// An escalated SIGKILL against a signal-resistant child disagrees the
+	// same way and likewise stays observed.
+	if waitErr == nil {
+		cancelSignalled = false
+	} else if cancelSignalled && !pushProcessKilledBySigTerm(cmd.ProcessState) {
+		cancelSignalled = false
+	}
 
 	result.stdout = stdoutBuffer.Bytes()
 	result.stderr = stderrBuffer.Bytes()
 
-	// Record the exact exit code whenever a process status exists.
-	if waitErr == nil {
+	// Record the exact exit code from the reaped process status, even when
+	// the wait operation carries a wrapping error.
+	if cmd.ProcessState != nil {
+		result.exitCode = cmd.ProcessState.ExitCode()
+	} else if waitErr == nil {
 		result.exitCode = 0
 	} else {
 		var exitErr *exec.ExitError
@@ -789,14 +1001,28 @@ func (gc *GitCommit) GitPush(ctx context.Context, route GitPushRoute) GitPushRes
 	}
 
 	// Each terminal outcome is distinguishable and logged in the existing
-	// style; no path returns an unexplained sentinel.
+	// style; no path returns an unexplained sentinel. Only a cancellation
+	// that demonstrably terminated the live direct process is reported as
+	// cancelled; a late context error never relabels an independently
+	// completed or failed process.
 	streamErr := errors.Join(stdoutReadErr, stderrReadErr)
 	switch {
-	case ctx.Err() != nil:
-		// Cancellation remains its own outcome; the cancelled popup guard
-		// keeps a late result away from a popup the user already closed.
+	case cancelSignalled:
+		// Genuine cancellation keeps the reaped process status/error and
+		// joins the context cause so errors.Is(Err(), context.Canceled)
+		// holds; the cancelled popup guard keeps a late result away from
+		// a popup the user already closed.
 		result.cancelled = true
-		result.err = ctx.Err()
+		// Join both the standard cancellation sentinel and any custom
+		// cancel cause: WithCancelCause supplies a non-sentinel cause
+		// while ctx.Err() stays context.Canceled, so joining the cause
+		// alone would drop the standard identity. When the cause already
+		// carries the sentinel, joining it alone avoids duplication.
+		cancelErr := context.Cause(ctx)
+		if ctxErr := ctx.Err(); ctxErr != nil && (cancelErr == nil || !errors.Is(cancelErr, ctxErr)) {
+			cancelErr = errors.Join(ctxErr, cancelErr)
+		}
+		result.err = errors.Join(waitErr, cancelErr, streamErr)
 		gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, strings.Join(pushGitArgs, " "), logging.WARN, fmt.Sprintf("[%s CANCELLED]", logging.GIT_PUSH_OPS), true)
 	case waitErr != nil:
 		// A process failure and a stream capture failure can happen at the
@@ -813,10 +1039,10 @@ func (gc *GitCommit) GitPush(ctx context.Context, route GitPushRoute) GitPushRes
 	}
 
 	// Stream read failures are logged independently of the process outcome
-	// so a nonzero exit does not hide a broken stream. On cancellation the
-	// read errors are the expected consequence of the pipe close that
-	// unblocked the readers.
-	if ctx.Err() == nil {
+	// so a nonzero exit does not hide a broken stream. On genuine
+	// cancellation the read errors are the expected consequence of the pipe
+	// close that unblocked the readers.
+	if !cancelSignalled {
 		if stdoutReadErr != nil {
 			gc.logging.RegisterNewLog(logging.GIT_PUSH_OPS, strings.Join(pushGitArgs, " "), logging.ERROR, fmt.Sprintf("[READ ERROR]: %s", stdoutReadErr), true)
 		}
