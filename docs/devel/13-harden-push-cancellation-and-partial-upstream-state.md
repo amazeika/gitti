@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: shipped
 issue: 13
 branch-kind: fix
 pr: 16
