@@ -3,7 +3,7 @@ status: in-progress
 issue: 13
 branch-kind: fix
 pr: 16
-completed: [1.3, 2, 3]
+completed: [1.3, 2, 3, 4]
 ---
 
 # Harden Push Cancellation and Partial Upstream State — Design Document
@@ -159,4 +159,6 @@ Both configured tracks returned schema-valid advice at configured models/efforts
 
 ## Outcome
 
-<!-- Build fills this after implementation, including the full-sweep result. Keep it brief. -->
+
+Phase 1.3 (`a59d39f`) delivered a single direct-process reaper with owned pipes: independent failures retain process status, errors and captured output rather than becoming late cancellations; live cancellation retains the context cause, and inherited-writer draining is bounded when the context cancels. An indistinguishable concurrent SIGTERM is classified as cancelled under the documented policy, without claiming signal provenance. Phase 2 (`8ac6562`) probes both upstream keys: verified absence of either publishes an empty upstream/count snapshot and default icon; actual config or ref/count failures retain last-good state and surface a remote/upstream error separately from push success. Phase 3 (`2cbb574`) recorded a passed full sweep: `go test ./...` (package results reported as cached) and `go build -o ./bin/gitti .`; no scope drift or diagnostics were recorded. The sweep does not establish the separate `go test -race ./api ./api/git` verification listed above. All three phase closes record no deviations, additional decisions, open-question changes or scope changes. No product questions remain unresolved; the documentation phase remains planned.
+
