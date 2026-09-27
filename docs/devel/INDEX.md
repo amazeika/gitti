@@ -4,6 +4,8 @@ Specifications for in-flight and shipped work.
 
 ## In progress
 
+None.
+
 ## Draft
 
 - [Compact Commit Log ref decorations](_draft-compact-commit-log-refs.md) — supersedes one
@@ -11,6 +13,8 @@ Specifications for in-flight and shipped work.
 
 ## Shipped
 
+
+- [Harden Push Cancellation and Partial Upstream State](13-harden-push-cancellation-and-partial-upstream-state.md) — issue [#13](https://github.com/amazeika/gitti/issues/13)
 - [Local-Only Branch Status and Publishing](8-local-only-branch-status-and-publishing.md) — issue [#8](https://github.com/amazeika/gitti/issues/8)
 - [Reliable Push Result and State Refresh](7-reliable-push-result-and-state-refresh.md) — issue [#7](https://github.com/amazeika/gitti/issues/7)
 - [Canonical local branches and linked-worktree status](6-canonical-local-branches-and-linked-worktree-status.md) — issue [#6](https://github.com/amazeika/gitti/issues/6)

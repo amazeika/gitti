@@ -46,7 +46,14 @@ type GitRemote struct {
 	cmdExecutor     *executor.CmdExecutor // generation executor bound to the captured worktree
 	remoteInventory atomic.Pointer[GitRemoteInventory]
 	remoteSync      atomic.Pointer[remoteSyncSnapshot]
-	logging         *logging.GittiLogging
+	// lastGoodRemoteSync is the last published tracked generation whose
+	// upstream names a remote-tracking ref. A failed read publishes
+	// unavailable health with this payload, so an intermittent probe
+	// failure restores genuine remote identity, icon, and counts even when
+	// newer published generations (a valid unpublished absence, or a
+	// local-dot upstream naming the branch itself) carry no remote state.
+	lastGoodRemoteSync atomic.Pointer[remoteSyncSnapshot]
+	logging            *logging.GittiLogging
 }
 
 // GitRemoteInventoryEntry holds one configured remote name with its complete
@@ -544,11 +551,14 @@ func (gr *GitRemote) CheckRemoteExist(passiveRunning bool) error {
 //	The fresh observation is assembled in local variables and stored in one
 //	publication after publishGuard passes, so a reader never mixes the state
 //	and payload from two generations. A successful read publishes the
-//	classified state with its matching payload. A failed current-generation
-//	read changes only the observation health to unavailable while retaining
-//	the previous payload as last-good data, and still returns the error so a
-//	caller can report the failed read. A stale generation publishes neither
-//	data nor health and returns the guard's error.
+//	classified state with its matching payload; a tracked read whose
+//	upstream names a remote-tracking ref also refreshes the last-good
+//	remote snapshot. A failed current-generation read changes only the
+//	observation health to unavailable while retaining the last-good remote
+//	payload (the previous payload when no tracked remote generation was ever
+//	published), and still returns the error so a caller can report the failed
+//	read. A stale generation publishes neither data nor health and returns
+//	the guard's error.
 //
 // ------------------------------------
 func (gr *GitRemote) GetLatestRemoteSyncStatusAndUpstream(publishGuard PublishGuard) error {
@@ -561,12 +571,18 @@ func (gr *GitRemote) GetLatestRemoteSyncStatusAndUpstream(publishGuard PublishGu
 	}
 
 	if observationErr != nil {
-		// only the health changes; the previous payload stays as last-good
+		// only the health changes; the last-good remote payload stays, so
+		// a valid absence or local-dot generation published since the
+		// last tracked remote read is not mistaken for restorable state
 		previous := gr.remoteSync.Load()
+		retain := previous
+		if lastGood := gr.lastGoodRemoteSync.Load(); lastGood != nil {
+			retain = lastGood
+		}
 		gr.remoteSync.Store(&remoteSyncSnapshot{
-			remoteSyncStatus:      previous.remoteSyncStatus,
-			upStreamRemoteIcon:    previous.upStreamRemoteIcon,
-			currentBranchUpStream: previous.currentBranchUpStream,
+			remoteSyncStatus:      retain.remoteSyncStatus,
+			upStreamRemoteIcon:    retain.upStreamRemoteIcon,
+			currentBranchUpStream: retain.currentBranchUpStream,
 			observationState:      UpstreamStateUnavailable,
 			observedBranch:        previous.observedBranch,
 		})
@@ -577,13 +593,20 @@ func (gr *GitRemote) GetLatestRemoteSyncStatusAndUpstream(publishGuard PublishGu
 	if upStreamIcon == "" {
 		upStreamIcon = DefaultUpStreamRemoteIcon
 	}
-	gr.remoteSync.Store(&remoteSyncSnapshot{
+	published := &remoteSyncSnapshot{
 		remoteSyncStatus:      observation.RemoteSync,
 		upStreamRemoteIcon:    upStreamIcon,
 		currentBranchUpStream: observation.UpStream,
 		observationState:      observation.State,
 		observedBranch:        observation.Branch,
-	})
+	}
+	gr.remoteSync.Store(published)
+	if observation.State == UpstreamStateTracked && observation.UpStream != observation.Branch {
+		// a resolved remote-tracking upstream is restorable remote
+		// state; a local-dot upstream names the branch itself and
+		// carries no remote identity worth restoring later
+		gr.lastGoodRemoteSync.Store(published)
+	}
 	return nil
 }
 

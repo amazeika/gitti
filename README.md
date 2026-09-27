@@ -239,6 +239,13 @@ detached or unborn `HEAD`, and an upstream inspection failure have separate labe
 **Upstream unavailable** means Gitti could not inspect tracking state reliably; check the log and
 retry instead of treating it as a first push.
 
+Gitti reads both `branch.<name>.remote` and `branch.<name>.merge`. If either key is genuinely
+absent, the branch is validly unpublished—even when the other key remains—and refresh clears its
+upstream identity and ahead/behind counts and restores the default no-upstream icon. A failed config
+read, or a fully configured upstream whose ref or counts cannot be read, is a real inspection
+failure: Gitti marks the state unavailable and preserves the last complete snapshot instead of
+publishing partial values or treating the branch as unpublished.
+
 Press `p` on a **Local only** branch to open **Publish Branch**. Gitti proposes the only
 push-capable remote when there is one. With several, choose the destination first; `origin` is
 initially selected when present, but publication does not begin until you confirm it. If no remote
@@ -266,6 +273,16 @@ A completed background push shows the working directory, each Git argument, the 
 separate stdout and stderr. This makes failures such as rejected updates visible without treating
 the displayed arguments as a shell command.
 
+A signal exit is not automatically a cancellation. A direct Git process that has already exited
+keeps its observed success or failure when cancellation arrives later; SIGTERM without a
+cancellation request, SIGKILL, other non-matching signals, and nonzero exits remain process
+failures with their status, error, and captured output. If cancellation reaches a live child and
+its reaped status matches the cancellation action, Gitti reports a cancelled result while retaining
+the process status and cancellation cause. On Unix, an independent SIGTERM racing Gitti's
+cancellation SIGTERM is indistinguishable and follows the cancellation-outcome policy; this does
+not prove which signal caused termination. If descendants keep output pipes open, the final drain
+is bounded after cancellation, so bytes unread at the cutoff may be lost.
+
 After Git accepts a push, Gitti displays a repository-state refresh stage before marking the
 operation fully successful. The refresh reloads the current branch and upstream, ahead/behind
 counts, remote branches, and Commit Log decorations from local Git state; it does not fetch. A
@@ -275,6 +292,15 @@ If Git succeeds but this refresh fails, the popup reports the push as successful
 separate refresh warning. The remote update is not rolled back, and Gitti keeps the last complete
 state instead of replacing it with partial results. Signed pushes use the terminal for Git's
 interaction and request the same state refresh when the terminal returns.
+
+To verify push cancellation and upstream refresh behavior as a contributor, run the focused API
+packages, the full suite, and the race-enabled API suites:
+
+```bash
+go test ./api ./api/git
+go test ./...
+go test -race ./api ./api/git
+```
 
 ### Screen modes
 
