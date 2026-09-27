@@ -2,8 +2,8 @@
 status: in-progress
 issue: 17
 branch-kind: fix
-pr: null
-completed: []
+pr: 18
+completed: [1]
 follow-up:
   issue-url: https://github.com/amazeika/gitti/issues/17
   source-issue-url: https://github.com/amazeika/gitti/issues/13
@@ -92,7 +92,7 @@ Stable identifiers below refer to the unchecked findings in #17 in their issue o
 **Allowed scope:** `api/git/commit.go`, `api/git/commit_test.go`, `api/git/push_phase13_policy_outcome_additive_test.go`, `api/git/push_liveness_unix.go`, `docs/devel/13-harden-push-cancellation-and-partial-upstream-state.md`; a narrowly necessary push test seam only if deterministic ordering cannot be established test-only.
 **Exclusions:** upstream classification, push argv, signal-policy changes, deleting behavioral oracles, altering the shipped source spec's frontmatter or completed phase records.
 **Counterexamples:** cancellation before a holder has started; a test passing after the reaper notification was already consumed; source Goal claiming all cancelled outcomes were caused by our SIGTERM; a frozen test loosened rather than strengthened.
-**Tests:** pending
+**Tests:** `api/git/push_phase1_ordered_policy_test.go`
 
 **Acceptance criteria:**
 
