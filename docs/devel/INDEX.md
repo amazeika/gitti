@@ -4,7 +4,7 @@ Specifications for in-flight and shipped work.
 
 ## In progress
 
-None.
+- [Repair Push Outcomes and Upstream Observations](17-repair-push-and-upstream-regressions.md) — issue [#17](https://github.com/amazeika/gitti/issues/17)
 
 ## Draft
 
