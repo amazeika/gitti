@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: shipped
 issue: 17
 branch-kind: fix
 pr: 18
@@ -190,4 +190,6 @@ Phase 1 (`d097833`) aligned the matching-SIGTERM cancellation-outcome wording wi
 The predecessor scopes were #13 Phase `1.3` (push), repaired by this spec’s Phase `1`, and #13 Phase `2` (upstream), repaired by this spec’s Phase `2`. These are follow-up repairs, not accepted phase replacements within #17: no old→new phase-ID revision or material Build decision was recorded. The final closes for Phases `1`, `2` and `3` report no deviations, decisions or deferrals; no product question remains open.
 
 The authoritative full sweep passed `go test ./...` (package results cached) and `go build -o ./bin/gitti .`, with no scope drift or diagnostics. The sweep receipts do not establish the separate uncached, race or vet commands listed in §4; those checks are not claimed as passed by this sweep. No further implementation work was recorded as deferred.
+
+**Documentation completed:** Phase 5 in commit `1a61a36`; 1 documentation file updated.
 
