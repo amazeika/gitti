@@ -3,7 +3,7 @@ status: in-progress
 issue: 17
 branch-kind: fix
 pr: 18
-completed: [1, 2, 3]
+completed: [1, 2, 3, 4]
 follow-up:
   issue-url: https://github.com/amazeika/gitti/issues/17
   source-issue-url: https://github.com/amazeika/gitti/issues/13
@@ -185,4 +185,9 @@ Both configured lanes returned schema-valid advice on this draft. No tests were 
 
 ## Outcome
 
-<!-- Build fills this after implementation, including the full-sweep result. Keep it brief. -->
+Phase 1 (`d097833`) aligned the matching-SIGTERM cancellation-outcome wording without claiming signal provenance, added holder-STARTED prerequisites and an opt-in gate proving direct `Wait` returned before an unconsumed completion notification; late cancellation retains the completed child’s failure and streams. Phase 2 (`be98d68`) retains the latest complete published upstream payload on read failure while marking health unavailable, rejects stale publications, resolves local-dot tracking using Git’s first merge ref, and refuses push preparation when that ref cannot resolve. Its regressions cover transitions, multi-merge refs and independent per-key command-start failures. Phase 3 (`e88f0f4`) recorded the full sweep.
+
+The predecessor scopes were #13 Phase `1.3` (push), repaired by this spec’s Phase `1`, and #13 Phase `2` (upstream), repaired by this spec’s Phase `2`. These are follow-up repairs, not accepted phase replacements within #17: no old→new phase-ID revision or material Build decision was recorded. The final closes for Phases `1`, `2` and `3` report no deviations, decisions or deferrals; no product question remains open.
+
+The authoritative full sweep passed `go test ./...` (package results cached) and `go build -o ./bin/gitti .`, with no scope drift or diagnostics. The sweep receipts do not establish the separate uncached, race or vet commands listed in §4; those checks are not claimed as passed by this sweep. No further implementation work was recorded as deferred.
+
