@@ -3,7 +3,7 @@ status: in-progress
 issue: 17
 branch-kind: fix
 pr: 18
-completed: [1, 2, 3, 4]
+completed: [1, 2, 3, 4, 5]
 follow-up:
   issue-url: https://github.com/amazeika/gitti/issues/17
   source-issue-url: https://github.com/amazeika/gitti/issues/13
