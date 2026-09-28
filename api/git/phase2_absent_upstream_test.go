@@ -254,8 +254,9 @@ func TestPhase2UpstreamConfigKeyOutcomes(t *testing.T) {
 				}
 			}
 
-			// the untouched key stays real, so the baseline is the tracked
-			// last-good snapshot every error case must retain
+			// the untouched key stays real, so the re-established tracked
+			// baseline is the latest published payload every error case
+			// must retain
 			setModes("value", "real")
 			if err := gr.GetLatestRemoteSyncStatusAndUpstream(nil); err != nil {
 				t.Fatalf("the baseline tracked-branch read failed: %v", err)
@@ -298,6 +299,13 @@ func TestPhase2UpstreamConfigKeyOutcomes(t *testing.T) {
 
 			for _, mode := range []string{"exit1-stdout", "exit1-stderr", "exit128", "exit2", "stderr-success", "whitespace", "empty", "multiline"} {
 				t.Run(mode, func(t *testing.T) {
+					// re-establish the tracked baseline: the earlier absence
+					// case published unpublished, and failures retain the
+					// latest published payload
+					setModes("value", "real")
+					if err := gr.GetLatestRemoteSyncStatusAndUpstream(nil); err != nil {
+						t.Fatalf("%s mode %s baseline refresh failed: %v, want tracked success", key, mode, err)
+					}
 					setModes(mode, "real")
 					before := len(gittiLogging.GetFullLogs())
 					if err := gr.GetLatestRemoteSyncStatusAndUpstream(nil); err == nil {

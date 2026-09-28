@@ -3,7 +3,7 @@ status: in-progress
 issue: 17
 branch-kind: fix
 pr: 18
-completed: [1]
+completed: [1, 2]
 follow-up:
   issue-url: https://github.com/amazeika/gitti/issues/17
   source-issue-url: https://github.com/amazeika/gitti/issues/13
@@ -117,7 +117,7 @@ Stable identifiers below refer to the unchecked findings in #17 in their issue o
 **Allowed scope:** `api/git/remote.go`, `api/git/utils.go`, `api/git/phase2_absent_upstream_test.go`, `api/git/upstream_partial_config_test.go`, `api/daemon_partial_upstream_test.go`, and narrowly necessary `api/git` snapshot/push-preparation tests or refresh synchronization.
 **Exclusions:** fetch policy, remote inventory, refspec redesign, changing partial-key/attached/detached/unborn semantics, replacing valid local-dot upstreams with unpublished state.
 **Counterexamples:** tracked remote → unpublished → read failure restoring old icon; tracked remote → local-dot → failure restoring old remote; multiple merge values with first unresolvable and last resolvable being marked tracked, or first resolvable and last different being resolved to the last; removing Git from PATH before the config command is selected; guard rejection publishing unavailable health.
-**Tests:** pending
+**Tests:** `api/daemon_partial_upstream_test.go`, `api/git/phase2_repair_snapshot_localdot_test.go`, `api/git/upstream_partial_config_test.go`, `api/git/phase2_trailing_newline_first_merge_test.go`
 
 **Acceptance criteria:**
 
