@@ -14,6 +14,8 @@ None.
 ## Shipped
 
 
+
+- [Repair Push Outcomes and Upstream Observations](17-repair-push-and-upstream-regressions.md) — issue [#17](https://github.com/amazeika/gitti/issues/17)
 - [Harden Push Cancellation and Partial Upstream State](13-harden-push-cancellation-and-partial-upstream-state.md) — issue [#13](https://github.com/amazeika/gitti/issues/13)
 - [Local-Only Branch Status and Publishing](8-local-only-branch-status-and-publishing.md) — issue [#8](https://github.com/amazeika/gitti/issues/8)
 - [Reliable Push Result and State Refresh](7-reliable-push-result-and-state-refresh.md) — issue [#7](https://github.com/amazeika/gitti/issues/7)

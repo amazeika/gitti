@@ -231,12 +231,14 @@ func TestPartialUpstreamConfigRefreshPublishesUnpublished(t *testing.T) {
 // ------------------------------------
 //
 //	TestUpstreamConfigKeyValidationMatrix proves each upstream config key is
-//	validated the same way: only the verified missing-key result (exit 1
-//	with empty stdout and stderr) is absence, a trimmed single-line value
-//	(including ".") is usable, and every other outcome (start failure
-//	covered separately, exit 1 with stdout/stderr, other exits, zero-exit
-//	stderr, whitespace-only/empty/multiline success) is a read error that
-//	reports unavailable and keeps the last-good snapshot.
+//	validated the same way.
+//	Only the verified missing-key result is absence: exit 1 with empty
+//	stdout and stderr.
+//	A trimmed single-line value (including ".") is usable.
+//	Every other outcome is a read error: start failure is covered
+//	separately, and exit 1 with stdout or stderr, other exits, zero-exit
+//	stderr, and whitespace-only, empty, or multiline success each report
+//	unavailable and retain the latest published payload.
 //
 // ------------------------------------
 func TestUpstreamConfigKeyValidationMatrix(t *testing.T) {
@@ -257,8 +259,9 @@ func TestUpstreamConfigKeyValidationMatrix(t *testing.T) {
 				}
 			}
 
-			// the untouched key stays real, so the baseline is the tracked
-			// last-good snapshot every error case must retain
+			// the untouched key stays real, so the re-established tracked
+			// baseline is the latest published payload every error case
+			// must retain
 			setModes("value", "real")
 			if err := gr.GetLatestRemoteSyncStatusAndUpstream(nil); err != nil {
 				t.Fatalf("the baseline tracked-branch read failed: %v", err)
@@ -303,6 +306,13 @@ func TestUpstreamConfigKeyValidationMatrix(t *testing.T) {
 
 			for _, mode := range []string{"exit1-stdout", "exit1-stderr", "exit128", "exit2", "stderr-success", "whitespace", "empty", "multiline"} {
 				t.Run(mode, func(t *testing.T) {
+					// re-establish the tracked baseline: the earlier absence
+					// case published unpublished, and failures retain the
+					// latest published payload
+					setModes("value", "real")
+					if err := gr.GetLatestRemoteSyncStatusAndUpstream(nil); err != nil {
+						t.Fatalf("%s mode %s baseline refresh failed: %v, want tracked success", key, mode, err)
+					}
 					setModes(mode, "real")
 					before := len(gittiLogging.GetFullLogs())
 					if err := gr.GetLatestRemoteSyncStatusAndUpstream(nil); err == nil {
@@ -350,9 +360,13 @@ func TestUpstreamConfigStartFailureIsAnError(t *testing.T) {
 // ------------------------------------
 //
 //	TestUpstreamConfigErrorWinsOverOtherKeyAbsence proves both keys are read
-//	even when one is missing: a genuine read failure on either key reports
-//	an error (identifying the failing command) even while the other key is
-//	verifiably absent, and failures on both keys identify both commands.
+//	even when one is missing.
+//	A genuine read failure on either key wins over the other key's verified
+//	absence and reports an error.
+//	The refresh publishes unavailable health and retains the latest
+//	published payload.
+//	Each failing command is identified in the error and the logs, so
+//	failures on both keys identify both commands.
 //
 // ------------------------------------
 func TestUpstreamConfigErrorWinsOverOtherKeyAbsence(t *testing.T) {
@@ -393,8 +407,8 @@ func TestUpstreamConfigErrorWinsOverOtherKeyAbsence(t *testing.T) {
 //
 //	TestCompleteConfigProbeFailuresKeepLastGood proves that with both keys
 //	set, a failed upstream-ref probe and a failed count probe each report an
-//	error, publish unavailable health, and retain the last-good snapshot
-//	including the upstream icon and counts.
+//	error, publish unavailable health, and retain the latest published
+//	payload including the upstream icon and counts.
 //
 // ------------------------------------
 func TestCompleteConfigProbeFailuresKeepLastGood(t *testing.T) {
@@ -766,5 +780,100 @@ func TestTrackedDetachedUnbornPushBehaviorIntact(t *testing.T) {
 	}
 	if _, err := gc.prepareGitPush(GitPushRoute{RemoteName: "origin", PushType: PUSH, Branch: "unborn", Intent: PushIntentPush}); err == nil || !strings.Contains(err.Error(), "no pushable branch") {
 		t.Errorf("an unborn branch was not refused for push: %v", err)
+	}
+}
+
+// ------------------------------------
+//
+//	TestWhitespaceFirstMergeRefusesPushBeforeStart proves a whitespace-only
+//	first merge value is never skipped in favor of a later ref: Git itself
+//	cannot resolve the captured-branch upstream, the observation reports
+//	unavailable with the latest payload retained, and push preparation
+//	refuses before starting a push.
+//
+// ------------------------------------
+func TestWhitespaceFirstMergeRefusesPushBeforeStart(t *testing.T) {
+	root, run := trackedMasterFixture(t)
+	run("branch", "targetB")
+	run("commit", "--allow-empty", "-q", "-m", "B1")
+	gr, _ := partialRemoteUnderTest(t, root)
+
+	if err := gr.GetLatestRemoteSyncStatusAndUpstream(nil); err != nil {
+		t.Fatalf("the baseline tracked-branch read failed: %v", err)
+	}
+	retained := gr.RemoteSyncStatusAndUpstream()
+	if retained.ObservationState != UpstreamStateTracked {
+		t.Fatalf("baseline observation = %s, want tracked", retained.ObservationState)
+	}
+
+	// a whitespace-only first merge value followed by a resolvable later
+	// ref under a local-dot remote: config --get reports the later value
+	// while Git must resolve the first
+	run("config", "branch.master.remote", ".")
+	run("config", "--unset-all", "branch.master.merge")
+	run("config", "--add", "branch.master.merge", "   ")
+	run("config", "--add", "branch.master.merge", "refs/heads/targetB")
+
+	lastMerge, err := p2rGitOutput(t, root, "config", "--get", "branch.master.merge")
+	if err != nil {
+		t.Fatalf("the config trap oracle failed: %v", err)
+	}
+	if lastMerge != "refs/heads/targetB" {
+		t.Fatalf("test setup: config --get merge = %q, want the later value refs/heads/targetB", lastMerge)
+	}
+	if _, err := p2rGitOutput(t, root, "rev-parse", "--abbrev-ref", "master@{upstream}"); err == nil {
+		t.Fatal("test setup: Git resolved master@{upstream} with a whitespace-only first merge value, want the resolution failure")
+	}
+
+	argvLog := filepath.Join(t.TempDir(), "push-argv.log")
+	installGitWrapper(t, pushArgvCaptureWrapper, realGitPath(t))
+	t.Setenv("PUSH_ARGV_LOG", argvLog)
+
+	if err := gr.GetLatestRemoteSyncStatusAndUpstream(nil); err == nil {
+		t.Fatal("the whitespace-first read returned nil, want the resolution error")
+	}
+	got := gr.RemoteSyncStatusAndUpstream()
+	if got.ObservationState != UpstreamStateUnavailable {
+		t.Errorf("whitespace-first observation = %s, want unavailable rather than the promoted later ref", got.ObservationState)
+	}
+	if got.CurrentBranchUpStream == "targetB" {
+		t.Errorf("the read promoted the later merge value %q to the tracked upstream, want no invented tracked ref", got.CurrentBranchUpStream)
+	}
+	if got.ObservedBranch != retained.ObservedBranch ||
+		got.CurrentBranchUpStream != retained.CurrentBranchUpStream ||
+		got.UpStreamRemoteIcon != retained.UpStreamRemoteIcon ||
+		got.RemoteSyncStatus != retained.RemoteSyncStatus {
+		t.Errorf("the whitespace-first failure moved the payload from %+v to %+v, want the retained latest payload with unavailable health", retained, got)
+	}
+
+	gc, gittiLogging := partialCommitUnderTest(t, root)
+	route := GitPushRoute{RemoteName: "origin", Branch: "master", Intent: PushIntentPublish}
+	if _, err := gc.prepareGitPush(route); err == nil {
+		t.Fatal("whitespace-first push preparation succeeded, want the re-read refusal")
+	}
+	result := gc.GitPush(context.Background(), route)
+	if result.Started() {
+		t.Error("the whitespace-first push started a process, want refusal before process start")
+	}
+	if result.ExitCode() != -1 {
+		t.Errorf("ExitCode() = %d, want -1 for the absent process status", result.ExitCode())
+	}
+	if result.Err() == nil {
+		t.Error("Err() = nil, want the refusal error so the popup can act on it")
+	}
+	if result.Success() {
+		t.Error("a refused push must not be reported as a success")
+	}
+	var notStartedLogged bool
+	for _, entry := range gittiLogging.GetFullLogs() {
+		if entry.OpsSeverityLevel == logging.WARN && strings.Contains(entry.OpsDescription, "NOT STARTED") {
+			notStartedLogged = true
+		}
+	}
+	if !notStartedLogged {
+		t.Error("a refusal before start left no NOT STARTED log entry")
+	}
+	if invocations := readArgvInvocations(t, argvLog); len(invocations) != 0 {
+		t.Errorf("the refused push recorded %d push invocations, want none before start", len(invocations))
 	}
 }

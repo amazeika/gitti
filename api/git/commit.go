@@ -60,6 +60,13 @@ type GitCommit struct {
 	// reader before its first read; tests use it to hold the readers until
 	// after the child exits
 	gitPushDrainPreRead func()
+	// p1oWaitGateAck and p1oWaitGateRelease form the optional phase-1
+	// ordered-fixture gate between direct Wait return and the buffered
+	// completion-notification send. Both nil in normal use: the reaper
+	// behaves exactly as without the gate and never blocks.
+	p1oWaitGateMu      sync.Mutex
+	p1oWaitGateAck     chan<- struct{}
+	p1oWaitGateRelease <-chan struct{}
 }
 
 type LatestCommitMsgAndDesc struct {
@@ -676,6 +683,21 @@ func (gc *GitCommit) GitPushResult() GitPushResult {
 
 // ------------------------------------
 //
+//	Install the phase-1 ordered-fixture wait gate. The reaper closes ack
+//	after direct Wait returns and blocks until release closes before the
+//	completion notification can be received. Unset by default: ordinary
+//	pushes never block.
+//
+// ------------------------------------
+func (gc *GitCommit) SetP1oWaitGate(ack chan<- struct{}, release <-chan struct{}) {
+	gc.p1oWaitGateMu.Lock()
+	defer gc.p1oWaitGateMu.Unlock()
+	gc.p1oWaitGateAck = ack
+	gc.p1oWaitGateRelease = release
+}
+
+// ------------------------------------
+//
 //	GitPush executes the confirmed push or publish route on the generation's
 //	command executor. The route's intent, remote, push type, and branch are
 //	re-validated by prepareGitPush immediately before the process is
@@ -835,9 +857,24 @@ func (gc *GitCommit) GitPush(ctx context.Context, route GitPushRoute) GitPushRes
 	// return.
 	// A later cancellation check then sees a completed process even when the
 	// completion notification has not been consumed yet.
+	// Snapshot the optional phase-1 wait gate once at push start: when set,
+	// the reaper acknowledges direct Wait return before the completion
+	// notification can be received and holds that notification until the
+	// test releases it. Unset leaves Wait delivery exactly as before.
+	gc.p1oWaitGateMu.Lock()
+	p1oGateAck := gc.p1oWaitGateAck
+	p1oGateRelease := gc.p1oWaitGateRelease
+	gc.p1oWaitGateMu.Unlock()
 	waitCh := make(chan error, 1)
 	go func() {
-		waitCh <- cmd.Wait()
+		reapedErr := cmd.Wait()
+		if p1oGateAck != nil {
+			close(p1oGateAck)
+			if p1oGateRelease != nil {
+				<-p1oGateRelease
+			}
+		}
+		waitCh <- reapedErr
 	}()
 
 	// Ordinary completion retains every byte by draining both readers to
@@ -1000,11 +1037,14 @@ func (gc *GitCommit) GitPush(ctx context.Context, route GitPushRoute) GitPushRes
 		}
 	}
 
-	// Each terminal outcome is distinguishable and logged in the existing
-	// style; no path returns an unexplained sentinel. Only a cancellation
-	// that demonstrably terminated the live direct process is reported as
-	// cancelled; a late context error never relabels an independently
-	// completed or failed process.
+	// Each terminal outcome is distinguishable.
+	// No path returns an unexplained sentinel.
+	// A requested cancellation with delivered SIGTERM, no known earlier
+	// completion, and matching reaped SIGTERM status is reported as cancelled.
+	// That matching-SIGTERM overlap is observationally indistinguishable
+	// from an independent same-SIGTERM race; matching status claims no signal provenance.
+	// A late context error never relabels a known completed process.
+	// A nonmatching status stays the observed process outcome.
 	streamErr := errors.Join(stdoutReadErr, stderrReadErr)
 	switch {
 	case cancelSignalled:

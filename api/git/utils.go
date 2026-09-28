@@ -266,6 +266,13 @@ type UpstreamObservation struct {
 //
 // ------------------------------------
 func resolveUpstreamObservation(cmdExecutor *executor.CmdExecutor, gittiLogger *logging.GittiLogging) (UpstreamObservation, error) {
+	return resolveUpstreamObservationWithConfigCmd(cmdExecutor, gittiLogger, nil)
+}
+
+// resolveUpstreamObservationWithConfigCmd runs the observation with only the
+// two branch-scoped config reads routable through the optional factory; a
+// nil factory keeps the generation-bound executor for every command.
+func resolveUpstreamObservationWithConfigCmd(cmdExecutor *executor.CmdExecutor, gittiLogger *logging.GittiLogging, configCmd func([]string) *exec.Cmd) (UpstreamObservation, error) {
 	checkoutBranchGitArgs := []string{"rev-parse", "--abbrev-ref", "HEAD"}
 	checkoutBranchOutput, checkoutBranchErr := cmdExecutor.RunGitCmd(checkoutBranchGitArgs, false).Output()
 	if checkoutBranchErr != nil {
@@ -293,8 +300,8 @@ func resolveUpstreamObservation(cmdExecutor *executor.CmdExecutor, gittiLogger *
 
 	remoteGitArgs := []string{"config", "--get", fmt.Sprintf("branch.%s.remote", branchName)}
 	mergeGitArgs := []string{"config", "--get", fmt.Sprintf("branch.%s.merge", branchName)}
-	remoteValue, remoteAbsent, remoteErr := readUpstreamConfigKey(cmdExecutor, branchName, "remote")
-	mergeValue, mergeAbsent, mergeErr := readUpstreamConfigKey(cmdExecutor, branchName, "merge")
+	remoteValue, remoteAbsent, remoteErr := readUpstreamConfigKeyWithConfigCmd(cmdExecutor, branchName, "remote", configCmd)
+	_, mergeAbsent, mergeErr := readUpstreamConfigKeyWithConfigCmd(cmdExecutor, branchName, "merge", configCmd)
 	if remoteErr != nil || mergeErr != nil {
 		// errors win over absence: both keys are always read, and each
 		// failing command is logged with its own identity while the
@@ -313,10 +320,13 @@ func resolveUpstreamObservation(cmdExecutor *executor.CmdExecutor, gittiLogger *
 		// the upstream-ref resolution nor the counts are needed
 		return UpstreamObservation{State: UpstreamStateUnpublished, Branch: branchName}, nil
 	}
-	// a local-dot remote tracks a ref in this same repository,
-	// resolved and counted directly from the merge value
+	// complete config resolves through the captured branch's own upstream.
+	// A local-dot remote tracks a local ref, so its first merge value is
+	// resolved and counted directly; any other remote resolves the
+	// branch's own @{upstream}. Both follow Git's first-merge-value rule
+	// rather than the last config --get value.
 	if remoteValue == "." {
-		return resolveLocalDotObservation(cmdExecutor, gittiLogger, branchName, mergeValue)
+		return resolveLocalDotObservation(cmdExecutor, gittiLogger, branchName)
 	}
 
 	upStream, upStreamErr := resolveUpStreamForBranch(cmdExecutor, branchName)
@@ -377,16 +387,29 @@ func unavailableUpstreamObservation(gittiLogger *logging.GittiLogging, gitArgs [
 //	missing-key result (exit 1 with empty stdout and empty stderr) reports
 //	absence. A start failure, any stderr, any other exit, or nonempty stdout
 //	on exit 1 is a read error. A successful value is usable when trimmed
-//	stdout is exactly one nonempty line (any single-line value, including
-//	".", is accepted without interpreting remote or merge-ref syntax);
-//	empty, whitespace-only, or multiline success is a read error, not absence.
+//	stdout is exactly one nonempty line. Any single-line value, including
+//	".", is accepted without interpreting remote or merge-ref syntax.
+//	Empty, whitespace-only, or multiline success is a read error, not absence.
 //	The returned error names the failing git config command so logs and
 //	reconciliation summaries identify which key failed.
 //
 // ------------------------------------
 func readUpstreamConfigKey(cmdExecutor *executor.CmdExecutor, branchName string, key string) (string, bool, error) {
+	return readUpstreamConfigKeyWithConfigCmd(cmdExecutor, branchName, key, nil)
+}
+
+// readUpstreamConfigKeyWithConfigCmd runs one config read through the
+// optional factory when it supplies a command, falling back to the
+// generation-bound executor on nil so the default path is unchanged.
+func readUpstreamConfigKeyWithConfigCmd(cmdExecutor *executor.CmdExecutor, branchName string, key string, configCmd func([]string) *exec.Cmd) (string, bool, error) {
 	gitArgs := []string{"config", "--get", fmt.Sprintf("branch.%s.%s", branchName, key)}
-	cmd := cmdExecutor.RunGitCmd(gitArgs, false)
+	var cmd *exec.Cmd
+	if configCmd != nil {
+		cmd = configCmd(gitArgs)
+	}
+	if cmd == nil {
+		cmd = cmdExecutor.RunGitCmd(gitArgs, false)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -433,25 +456,40 @@ func remoteSyncCountsAgainstUpstream(cmdExecutor *executor.CmdExecutor, branchNa
 // ------------------------------------
 //
 //	resolveLocalDotObservation classifies a branch whose remote is the
-//	local-dot repository. With remote "." the merge value already names
-//	the tracked ref in this same repository, so that ref is resolved and
-//	counted directly: the abbreviated merge ref is the upstream identity
-//	(e.g. "master"), and the ahead/behind counts compare the branch
-//	against it. Any resolution or count failure classifies as unavailable
-//	with the failing command logged, exactly like the upstream probes.
+//	local-dot repository. The authoritative merge ref is the first
+//	NUL-delimited record of `config --get-all -z`, matching Git's own
+//	first-merge-value rule for branch@{upstream}; the last value reported
+//	by `config --get` is never interpreted. That ref is resolved and
+//	counted directly: the abbreviated ref is the upstream identity and the
+//	ahead/behind counts compare the captured branch against it. A missing,
+//	blank, multiline, unresolvable, or uncountable first ref classifies as
+//	unavailable with the failing command logged, exactly like the upstream
+//	probes, so no later merge value is promoted to a tracked ref.
 //
 // ------------------------------------
-func resolveLocalDotObservation(cmdExecutor *executor.CmdExecutor, gittiLogger *logging.GittiLogging, branchName string, mergeValue string) (UpstreamObservation, error) {
-	refGitArgs := []string{"rev-parse", "--abbrev-ref", mergeValue}
+func resolveLocalDotObservation(cmdExecutor *executor.CmdExecutor, gittiLogger *logging.GittiLogging, branchName string) (UpstreamObservation, error) {
+	mergeGitArgs := []string{"config", "--get-all", "-z", fmt.Sprintf("branch.%s.merge", branchName)}
+	mergeOutput, mergeErr := cmdExecutor.RunGitCmd(mergeGitArgs, false).Output()
+	if mergeErr != nil {
+		return unavailableUpstreamObservation(gittiLogger, mergeGitArgs, fmt.Errorf("reading git config %s: %w", strings.Join(mergeGitArgs, " "), mergeErr))
+	}
+	firstMerge, _, _ := strings.Cut(string(mergeOutput), "\x00")
+	if strings.TrimSpace(firstMerge) == "" {
+		return unavailableUpstreamObservation(gittiLogger, mergeGitArgs, fmt.Errorf("reading git config %s: empty value", strings.Join(mergeGitArgs, " ")))
+	}
+	if strings.Contains(firstMerge, "\n") {
+		return unavailableUpstreamObservation(gittiLogger, mergeGitArgs, fmt.Errorf("reading git config %s: multiline value", strings.Join(mergeGitArgs, " ")))
+	}
+	refGitArgs := []string{"rev-parse", "--abbrev-ref", firstMerge}
 	refOutput, refErr := cmdExecutor.RunGitCmd(refGitArgs, false).Output()
 	if refErr != nil {
 		return unavailableUpstreamObservation(gittiLogger, refGitArgs, refErr)
 	}
 	upStream := strings.TrimSpace(string(refOutput))
 	if upStream == "" {
-		return unavailableUpstreamObservation(gittiLogger, refGitArgs, fmt.Errorf("rev-parse --abbrev-ref %s returned no ref", mergeValue))
+		return unavailableUpstreamObservation(gittiLogger, refGitArgs, fmt.Errorf("rev-parse --abbrev-ref %s returned no ref", firstMerge))
 	}
-	countsGitArgs := []string{"rev-list", "--left-right", "--count", branchName + "..." + mergeValue}
+	countsGitArgs := []string{"rev-list", "--left-right", "--count", branchName + "..." + firstMerge}
 	countsOutput, countsErr := cmdExecutor.RunGitCmd(countsGitArgs, false).Output()
 	if countsErr != nil {
 		return unavailableUpstreamObservation(gittiLogger, countsGitArgs, countsErr)

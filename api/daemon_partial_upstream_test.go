@@ -15,14 +15,13 @@ import (
 
 // ------------------------------------
 //
-//	partialUpstreamFakeGitScript stands in for git so the phase-2 daemon
-//	tests exercise partial upstream configuration deterministically. It
-//	answers every passive read the state passes make; FAKE_REMOTE_MODE and
-//	FAKE_MERGE_MODE select each upstream config key's answer (unset for the
-//	verified missing-key result, fail for a genuine read failure, dot for a
-//	local-dot remote value, anything else for the configured value), while
-//	FAKE_UPSTREAM_RESOLVE_FAIL breaks the configured-ref probe with both
-//	keys set.
+//	partialUpstreamFakeGitScript stands in for git in phase-2 daemon tests.
+//	It answers every passive read the state passes make.
+//	FAKE_REMOTE_MODE and FAKE_MERGE_MODE select each config key's answer.
+//	Unset means verified absence and fail means a read error.
+//	Dot means a local-dot remote and any other value means configured.
+//	FAKE_UPSTREAM_RESOLVE_FAIL breaks the ref probe with both keys set.
+//	Failures retain the latest payload with unavailable health.
 //
 // ------------------------------------
 const partialUpstreamFakeGitScript = `#!/bin/sh
